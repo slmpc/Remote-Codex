@@ -23,6 +23,7 @@ data class MainUiState(
     val detailLoading: Boolean = false,
     val detailError: String? = null,
     val hideIdleTasks: Boolean = false,
+    val newestOutputsFirst: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -32,6 +33,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         MainUiState(
             endpoint = preferences.getString("endpoint", "") ?: "",
             hideIdleTasks = preferences.getBoolean("hide_idle_tasks", false),
+            newestOutputsFirst = preferences.getBoolean("newest_outputs_first", false),
         ),
     )
     val state = _state.asStateFlow()
@@ -48,6 +50,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setHideIdleTasks(value: Boolean) {
         preferences.edit().putBoolean("hide_idle_tasks", value).apply()
         _state.value = _state.value.copy(hideIdleTasks = value)
+    }
+
+    fun setNewestOutputsFirst(value: Boolean) {
+        preferences.edit().putBoolean("newest_outputs_first", value).apply()
+        _state.value = _state.value.copy(newestOutputsFirst = value)
     }
 
     fun connect() {

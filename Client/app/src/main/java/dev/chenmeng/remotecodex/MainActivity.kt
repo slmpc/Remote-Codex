@@ -125,6 +125,7 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
             onBack = viewModel::closeTask,
             onRefresh = viewModel::refreshNow,
             onTaskClick = viewModel::openTask,
+            onNewestOutputsFirstChange = viewModel::setNewestOutputsFirst,
         )
     } else {
         ProjectListScreen(
@@ -205,6 +206,7 @@ private fun TaskDetailScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onTaskClick: (String) -> Unit,
+    onNewestOutputsFirstChange: (Boolean) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf(
@@ -274,7 +276,12 @@ private fun TaskDetailScreen(
             detail != null -> when (selectedTab) {
                 0 -> PlanTab(detail, Modifier.padding(padding), onTaskClick)
                 1 -> ContextTab(detail, Modifier.padding(padding))
-                2 -> OutputTab(detail, Modifier.padding(padding))
+                2 -> OutputTab(
+                    detail = detail,
+                    modifier = Modifier.padding(padding),
+                    newestFirst = state.newestOutputsFirst,
+                    onNewestFirstChange = onNewestOutputsFirstChange,
+                )
                 else -> ActivityTab(detail, Modifier.padding(padding))
             }
             state.detailLoading -> Box(
@@ -642,13 +649,38 @@ private fun ContextTab(detail: TaskDetail, modifier: Modifier) {
 }
 
 @Composable
-private fun OutputTab(detail: TaskDetail, modifier: Modifier) {
+private fun OutputTab(
+    detail: TaskDetail,
+    modifier: Modifier,
+    newestFirst: Boolean,
+    onNewestFirstChange: (Boolean) -> Unit,
+) {
+    val outputs = if (newestFirst) detail.modelOutputs.asReversed() else detail.modelOutputs
     LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
         item {
             SectionTitle("模型输出 · ${detail.modelOutputs.size}")
         }
+        item {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("最新输出优先", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (newestFirst) "最新内容显示在顶部" else "按产生时间从上到下显示",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = newestFirst, onCheckedChange = onNewestFirstChange)
+            }
+        }
         if (detail.modelOutputs.isEmpty()) item { EmptyBand("模型还没有输出") }
-        items(detail.modelOutputs, key = { it.id }) { output ->
+        items(outputs, key = { it.id }) { output ->
             MessageBand(
                 label = when (output.phase) {
                     "commentary" -> "PROGRESS"
