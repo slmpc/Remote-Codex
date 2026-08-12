@@ -164,6 +164,12 @@ codex login status
 
 手机每 2.5 秒刷新一次。Remote Codex 服务与 Codex Desktop 是不同进程，状态可能有短暂延迟。
 
+### 立即干预提示 Codex Desktop 连接失败
+
+运行中的 Desktop Task 由 Codex Desktop 进程持有。Remote Codex 会自动通过电脑本机的 `127.0.0.1:9229` 调试接口，把立即干预请求交给 Desktop 已连接的 Codex 客户端；手机端无需额外设置，这个接口也不会向局域网开放。
+
+遇到连接失败时，确认 Codex Desktop 仍在运行，然后重启 Codex Desktop 和 Remote Codex 服务。可以在电脑 PowerShell 中打开 `http://127.0.0.1:9229/json/list` 检查本机接口是否可用。接口不可用时，已加入队列的 Prompt 会保留并显示发送错误，不会静默删除。
+
 ## 数据说明
 
 服务端通过 Codex `app-server` 读取当前 Windows 用户的线程信息，并允许手机向已有 Task 发送 Prompt。“立即发送”会干预运行中的 Turn；Task 空闲时则直接开始新 Turn。也可以把 Prompt 加入队列，在当前 Turn 结束后自动继续。

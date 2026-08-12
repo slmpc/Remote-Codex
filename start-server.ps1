@@ -22,7 +22,7 @@ Write-Host ""
 
 Push-Location $serverDirectory
 try {
-    & node src/server.js
+    & node --experimental-websocket src/server.js
     if ($LASTEXITCODE -ne 0) { throw "Remote Codex 服务异常退出（代码 $LASTEXITCODE）。" }
 } finally {
     Pop-Location

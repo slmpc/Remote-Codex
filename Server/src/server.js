@@ -1,13 +1,14 @@
 import http from "node:http";
 import os from "node:os";
 import { CodexAppServer } from "./codex-client.js";
+import { DesktopCodexClient } from "./desktop-codex-client.js";
 import { TaskService } from "./task-service.js";
 
 const host = process.env.REMOTE_CODEX_HOST ?? "0.0.0.0";
 const port = Number(process.env.REMOTE_CODEX_PORT ?? 8787);
 const version = "1.3.0";
 const clients = new Set();
-const taskService = new TaskService(new CodexAppServer());
+const taskService = new TaskService(new CodexAppServer(), { desktopCodex: new DesktopCodexClient() });
 
 function localAddresses() {
   return Object.values(os.networkInterfaces())

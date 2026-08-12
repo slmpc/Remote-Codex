@@ -83,11 +83,12 @@ test("a recent in-progress plan marks the task as running", () => {
 test("recent rollout activity marks a cross-process task as running", () => {
   const now = new Date().toISOString();
   const activity = parseRolloutActivity([
-    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "task_started" } }),
+    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "task_started", turn_id: "turn-live" } }),
     JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "agent_message" } }),
   ].join("\n"));
   const task = normalizeTask({ id: "5", status: { type: "notLoaded" } }, null, null, activity);
   assert.equal(activity.active, true);
+  assert.equal(activity.turnId, "turn-live");
   assert.equal(task.state, "running");
 });
 
@@ -99,6 +100,7 @@ test("a terminal rollout event keeps the task idle", () => {
   ].join("\n"));
   const task = normalizeTask({ id: "6", status: { type: "notLoaded" } }, null, null, activity);
   assert.equal(activity.active, false);
+  assert.equal(activity.turnId, null);
   assert.equal(task.state, "idle");
 });
 

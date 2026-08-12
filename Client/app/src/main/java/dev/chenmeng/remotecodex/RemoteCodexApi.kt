@@ -227,6 +227,8 @@ class RemoteCodexApi {
                     id = it.getString("id"),
                     text = it.optString("text"),
                     createdAt = it.optLong("createdAt"),
+                    lastError = it.optNullableString("lastError"),
+                    lastAttemptAt = it.optNullableLong("lastAttemptAt"),
                 )
             }.orEmpty(),
             subagents = parseTasks(root.getJSONArray("subagents")),

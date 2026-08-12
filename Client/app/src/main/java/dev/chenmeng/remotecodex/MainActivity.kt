@@ -531,6 +531,13 @@ private fun QueuedPromptRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            prompt.lastError?.let { error ->
+                Text(
+                    "发送失败：$error",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
         IconButton(onClick = onIntervene, enabled = actionsEnabled) {
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "立即发送")

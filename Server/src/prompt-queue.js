@@ -29,7 +29,15 @@ export class PromptQueueStore {
       this.#queues = new Map(
         Object.entries(data.queues ?? {}).map(([threadId, prompts]) => [
           threadId,
-          Array.isArray(prompts) ? prompts.filter((item) => item?.id && item?.text) : [],
+          Array.isArray(prompts)
+            ? prompts
+              .filter((item) => item?.id && item?.text)
+              .map((item) => ({
+                ...item,
+                lastError: item.lastError ?? null,
+                lastAttemptAt: item.lastAttemptAt ?? null,
+              }))
+            : [],
         ]),
       );
     } catch (error) {
@@ -53,12 +61,31 @@ export class PromptQueueStore {
       threadId,
       text,
       createdAt: Date.now(),
+      lastError: null,
+      lastAttemptAt: null,
     };
     const prompts = this.#queues.get(threadId) ?? [];
     prompts.push(prompt);
     this.#queues.set(threadId, prompts);
     await this.#persist();
     return prompt;
+  }
+
+  async update(threadId, promptId, patch) {
+    const prompts = this.#queues.get(threadId) ?? [];
+    const index = prompts.findIndex((item) => item.id === promptId);
+    if (index < 0) return null;
+    const updated = {
+      ...prompts[index],
+      ...patch,
+      id: prompts[index].id,
+      threadId: prompts[index].threadId,
+      text: prompts[index].text,
+      createdAt: prompts[index].createdAt,
+    };
+    prompts[index] = updated;
+    await this.#persist();
+    return updated;
   }
 
   async remove(threadId, promptId) {

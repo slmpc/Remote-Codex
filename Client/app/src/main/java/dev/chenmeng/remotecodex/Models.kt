@@ -101,6 +101,8 @@ data class QueuedPrompt(
     val id: String,
     val text: String,
     val createdAt: Long,
+    val lastError: String?,
+    val lastAttemptAt: Long?,
 )
 
 data class GitInfo(val branch: String?, val sha: String?, val originUrl: String?)

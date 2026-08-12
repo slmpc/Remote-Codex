@@ -7,6 +7,7 @@ const LIVE_GOAL_STATUSES = new Set(["active", "paused", "usageLimited", "budgetL
 const WAITING_GOAL_STATUSES = new Set(["paused", "blocked", "usageLimited", "budgetLimited"]);
 const ROLLOUT_ACTIVITY_WINDOW_MS = 10 * 60 * 1000;
 const TERMINAL_ROLLOUT_EVENTS = new Set(["task_complete", "turn_aborted"]);
+const QUEUE_RETRY_DELAY_MS = 5_000;
 const ALL_THREAD_SOURCES = [
   "cli",
   "vscode",
@@ -116,6 +117,7 @@ export function parseRolloutActivity(content) {
       return {
         active: eventType === "task_started",
         eventType,
+        turnId: eventType === "task_started" ? entry.payload?.turn_id ?? null : null,
         updatedAt: lastActivityAt ?? Date.parse(entry.timestamp) ?? null,
       };
     }
@@ -240,10 +242,16 @@ export class TaskService extends EventEmitter {
   #rolloutData = new Map();
   #dispatchingPrompts = new Set();
 
-  constructor(codex, { refreshMs = 2500, limit = 50, promptQueue = new PromptQueueStore() } = {}) {
+  constructor(codex, {
+    refreshMs = 2500,
+    limit = 50,
+    promptQueue = new PromptQueueStore(),
+    desktopCodex = null,
+  } = {}) {
     super();
     this.codex = codex;
     this.promptQueue = promptQueue;
+    this.desktopCodex = desktopCodex;
     this.codex.on("error", (error) => this.emit("error", error));
     this.refreshMs = refreshMs;
     this.limit = limit;
@@ -348,8 +356,9 @@ export class TaskService extends EventEmitter {
     if (mode !== "queue") throw Object.assign(new Error("未知的 Prompt 操作"), { statusCode: 400 });
 
     const activeTurn = await this.#readActiveTurn(threadId);
+    const persistedActiveTurnId = activeTurn ? null : await this.#readPersistedActiveTurnId(threadId);
     const queued = await this.promptQueue.add(threadId, prompt);
-    const dispatched = activeTurn ? false : await this.#dispatchQueuedPrompt(threadId);
+    const dispatched = activeTurn || persistedActiveTurnId ? false : await this.#dispatchQueuedPrompt(threadId);
     return {
       action: dispatched ? "started" : "queued",
       prompt: queued,
@@ -366,9 +375,14 @@ export class TaskService extends EventEmitter {
   async interveneWithQueuedPrompt(threadId, promptId) {
     const prompt = this.promptQueue.list(threadId).find((item) => item.id === promptId);
     if (!prompt) throw Object.assign(new Error("队列中的 Prompt 不存在"), { statusCode: 404 });
-    const result = await this.#sendNow(threadId, prompt.text);
-    await this.promptQueue.remove(threadId, promptId);
-    return { ...result, queue: this.promptQueue.list(threadId) };
+    try {
+      const result = await this.#sendNow(threadId, prompt.text);
+      await this.promptQueue.remove(threadId, promptId);
+      return { ...result, queue: this.promptQueue.list(threadId) };
+    } catch (error) {
+      await this.#recordPromptFailure(threadId, promptId, error);
+      throw error;
+    }
   }
 
   async detail(threadId) {
@@ -470,44 +484,144 @@ export class TaskService extends EventEmitter {
   }
 
   async #sendNow(threadId, text) {
+    let desktopError = null;
     const activeTurn = await this.#readActiveTurn(threadId);
-    if (activeTurn) {
-      const result = await this.codex.request("turn/steer", {
-        threadId,
-        expectedTurnId: activeTurn.id,
-        input: [{ type: "text", text }],
-      });
-      return { action: "intervened", turnId: result.turnId };
+    const desktopTurnId = activeTurn?.id ?? await this.#readPersistedActiveTurnId(threadId);
+    if (desktopTurnId && this.desktopCodex) {
+      try {
+        const result = await this.desktopCodex.steer(threadId, desktopTurnId, text);
+        return { action: "intervened", turnId: result?.turnId ?? desktopTurnId, transport: "desktop" };
+      } catch (error) {
+        desktopError = error;
+      }
     }
 
-    const result = await this.codex.request("turn/start", {
-      threadId,
-      input: [{ type: "text", text }],
-    });
-    return { action: "started", turnId: result.turn?.id ?? null };
+    let thread;
+    try {
+      thread = await this.#ensureThreadLoaded(threadId);
+    } catch (error) {
+      if (desktopError && this.#isActiveWriter(error)) {
+        throw Object.assign(new Error(`Codex Desktop 正在执行此 Task，立即干预失败：${desktopError.message}`), {
+          statusCode: 409,
+        });
+      }
+      throw error;
+    }
+    let loadedActiveTurn = this.#activeTurn(thread);
+    if (loadedActiveTurn) {
+      try {
+        const result = await this.codex.request("turn/steer", {
+          threadId,
+          expectedTurnId: loadedActiveTurn.id,
+          input: [{ type: "text", text }],
+        });
+        return { action: "intervened", turnId: result.turnId };
+      } catch (error) {
+        if (!this.#isThreadNotFound(error)) throw error;
+        thread = await this.#ensureThreadLoaded(threadId);
+        loadedActiveTurn = this.#activeTurn(thread);
+        if (loadedActiveTurn) {
+          const result = await this.codex.request("turn/steer", {
+            threadId,
+            expectedTurnId: loadedActiveTurn.id,
+            input: [{ type: "text", text }],
+          });
+          return { action: "intervened", turnId: result.turnId };
+        }
+      }
+    }
+
+    try {
+      const result = await this.#startTurn(threadId, text, false);
+      return { action: "started", turnId: result.turn?.id ?? null };
+    } catch (error) {
+      if (desktopError && this.#isActiveWriter(error)) {
+        throw Object.assign(new Error(`Codex Desktop 正在执行此 Task，立即干预失败：${desktopError.message}`), {
+          statusCode: 409,
+        });
+      }
+      throw error;
+    }
   }
 
   async #dispatchQueuedPrompt(threadId) {
     if (this.#dispatchingPrompts.has(threadId)) return false;
     const prompt = this.promptQueue.list(threadId)[0];
     if (!prompt) return false;
+    if (prompt.lastError && Date.now() - (prompt.lastAttemptAt ?? 0) < QUEUE_RETRY_DELAY_MS) return false;
 
     this.#dispatchingPrompts.add(threadId);
     try {
-      if (await this.#readActiveTurn(threadId)) return false;
-      await this.codex.request("turn/start", {
-        threadId,
-        input: [{ type: "text", text: prompt.text }],
-      });
+      if (await this.#readPersistedActiveTurnId(threadId)) return false;
+      const thread = await this.#ensureThreadLoaded(threadId);
+      if (this.#activeTurn(thread)) return false;
+      await this.#startTurn(threadId, prompt.text, false);
       await this.promptQueue.remove(threadId, prompt.id);
       this.refresh().catch(() => {});
       return true;
     } catch (error) {
-      if (error.statusCode === 404) this.emit("error", error);
+      await this.#recordPromptFailure(threadId, prompt.id, error);
       return false;
     } finally {
       this.#dispatchingPrompts.delete(threadId);
     }
+  }
+
+  async #ensureThreadLoaded(threadId) {
+    try {
+      const result = await this.codex.request("thread/resume", { threadId });
+      return result?.thread ?? null;
+    } catch (error) {
+      const wrapped = Object.assign(new Error(`无法恢复 Task：${error.message}`), {
+        statusCode: this.#isThreadNotFound(error) ? 404 : error.statusCode,
+      });
+      wrapped.cause = error;
+      throw wrapped;
+    }
+  }
+
+  #activeTurn(thread) {
+    return (thread?.turns ?? []).findLast((turn) => turn.status === "inProgress") ?? null;
+  }
+
+  async #startTurn(threadId, text, ensureLoaded = true) {
+    if (ensureLoaded) await this.#ensureThreadLoaded(threadId);
+    try {
+      return await this.codex.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text }],
+      });
+    } catch (error) {
+      if (!this.#isThreadNotFound(error)) throw error;
+      await this.#ensureThreadLoaded(threadId);
+      return this.codex.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text }],
+      });
+    }
+  }
+
+  #isThreadNotFound(error) {
+    return /thread\s+not\s+found/i.test(error?.message ?? "");
+  }
+
+  #isActiveWriter(error) {
+    return /active\s+writer/i.test(error?.message ?? "")
+      || /active\s+writer/i.test(error?.cause?.message ?? "");
+  }
+
+  async #readPersistedActiveTurnId(threadId) {
+    const rolloutPath = this.#threads.get(threadId)?.path;
+    if (!rolloutPath) return null;
+    const { activity } = await this.#readPersistedRollout(rolloutPath);
+    return activity?.active ? activity.turnId ?? null : null;
+  }
+
+  async #recordPromptFailure(threadId, promptId, error) {
+    await this.promptQueue.update(threadId, promptId, {
+      lastError: error?.message ?? "Prompt 发送失败",
+      lastAttemptAt: Date.now(),
+    });
   }
 
   #activity(item) {

@@ -6,7 +6,7 @@
   "description": "LAN status API backed by the official Codex app-server protocol",
   "license": "GPL-3.0-only",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node --experimental-websocket src/server.js",
     "test": "node --test"
   },
   "engines": {
