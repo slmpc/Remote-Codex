@@ -102,6 +102,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "start-server.ps1") -Destination $bundleRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "start-server.cmd") -Destination $bundleRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "README.md") -Destination $bundleRoot
+    Copy-Item -LiteralPath (Join-Path $workspaceRoot "LICENSE") -Destination $bundleRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "CHANGELOG.md") -Destination $bundleRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "RELEASE_NOTES.md") -Destination $bundleRoot
     $serverArchive = Join-Path $distDirectory "Remote-Codex-Server-v$Version.zip"
@@ -124,6 +125,7 @@ try {
     New-Item -ItemType Directory -Force -Path $distributionRoot | Out-Null
     Copy-Item -LiteralPath $releaseApk, $serverArchive, $checksumFile -Destination $distributionRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "README.md") -Destination $distributionRoot
+    Copy-Item -LiteralPath (Join-Path $workspaceRoot "LICENSE") -Destination $distributionRoot
     Copy-Item -LiteralPath (Join-Path $workspaceRoot "RELEASE_NOTES.md") -Destination $distributionRoot
     $distributionArchive = Join-Path $distDirectory "Remote-Codex-v$Version.zip"
     Compress-Archive -Path (Join-Path $distributionRoot "*") -DestinationPath $distributionArchive -CompressionLevel Optimal -Force

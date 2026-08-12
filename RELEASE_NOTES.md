@@ -22,3 +22,7 @@
 ## 升级提示
 
 已安装 `1.2.0` 或 `1.2.1` 正式版时可直接覆盖升级。早期测试 APK 使用 Android 调试密钥签名，若手机提示签名冲突，请先卸载旧测试版再安装正式版。
+
+## 开源协议
+
+Remote Codex 采用 GNU General Public License v3.0（`GPL-3.0-only`）开源。完整源代码和许可证见 [GitHub 仓库](https://github.com/slmpc/Remote-Codex)。

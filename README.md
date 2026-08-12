@@ -217,3 +217,11 @@ Android 正式签名保存在当前用户的 `%LOCALAPPDATA%\RemoteCodex\signing
 - Node.js：20+
 
 版本变化见 `CHANGELOG.md`，本版摘要见 `RELEASE_NOTES.md`。
+
+## 开源协议
+
+Copyright (C) 2026 Chen Meng。
+
+本项目采用 [GNU General Public License v3.0](LICENSE) 开源，SPDX 标识为 `GPL-3.0-only`。你可以在 GPLv3 条款下使用、研究、修改和分发本项目；本软件不提供任何担保。
+
+源代码仓库：[github.com/slmpc/Remote-Codex](https://github.com/slmpc/Remote-Codex)
