@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -46,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -54,7 +57,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -130,6 +135,7 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
             onConnect = viewModel::connect,
             onRefresh = viewModel::refreshNow,
             onTaskClick = viewModel::openTask,
+            onHideIdleTasksChange = viewModel::setHideIdleTasks,
         )
     }
 }
@@ -143,7 +149,9 @@ private fun ProjectListScreen(
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onTaskClick: (String) -> Unit,
+    onHideIdleTasksChange: (Boolean) -> Unit,
 ) {
+    val expandedTasks = remember { mutableStateMapOf<String, Boolean>() }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -166,10 +174,25 @@ private fun ProjectListScreen(
             }
             state.snapshot?.let { snapshot ->
                 item { SummaryBand(snapshot.summary, snapshot.generatedAt) }
+                item {
+                    FilterBand(
+                        hideIdleTasks = state.hideIdleTasks,
+                        onHideIdleTasksChange = onHideIdleTasksChange,
+                    )
+                }
                 snapshot.projects.forEach { project ->
-                    item(key = "project-${project.id}") { ProjectHeader(project) }
-                    items(project.tasks, key = { it.id }) { task ->
-                        TaskCard(task = task, onClick = { onTaskClick(task.id) })
+                    val visibleTasks = project.tasks.filter { !state.hideIdleTasks || it.hasActiveBranch() }
+                    if (visibleTasks.isNotEmpty()) {
+                        item(key = "project-${project.id}") { ProjectHeader(project) }
+                        visibleTasks.forEach { task ->
+                            taskTreeItems(
+                                task = task,
+                                depth = 0,
+                                hideIdleTasks = state.hideIdleTasks,
+                                expandedTasks = expandedTasks,
+                                onTaskClick = onTaskClick,
+                            )
+                        }
                     }
                 }
             }
@@ -357,6 +380,48 @@ private fun SummaryValue(value: Int, label: String, color: Color) {
 }
 
 @Composable
+private fun FilterBand(hideIdleTasks: Boolean, onHideIdleTasksChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("隐藏空闲 Task", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Switch(
+            checked = hideIdleTasks,
+            onCheckedChange = onHideIdleTasksChange,
+        )
+    }
+}
+
+private fun CodexTask.hasActiveBranch(): Boolean =
+    state != "idle" || subagents.any(CodexTask::hasActiveBranch)
+
+private fun androidx.compose.foundation.lazy.LazyListScope.taskTreeItems(
+    task: CodexTask,
+    depth: Int,
+    hideIdleTasks: Boolean,
+    expandedTasks: MutableMap<String, Boolean>,
+    onTaskClick: (String) -> Unit,
+) {
+    val children = task.subagents.filter { !hideIdleTasks || it.hasActiveBranch() }
+    item(key = "task-${task.id}") {
+        TaskCard(
+            task = task,
+            depth = depth,
+            expanded = expandedTasks[task.id] == true,
+            visibleChildCount = children.size,
+            onExpand = { expandedTasks[task.id] = expandedTasks[task.id] != true },
+            onClick = { onTaskClick(task.id) },
+        )
+    }
+    if (expandedTasks[task.id] == true) {
+        children.forEach { child ->
+            taskTreeItems(child, depth + 1, hideIdleTasks, expandedTasks, onTaskClick)
+        }
+    }
+}
+
+@Composable
 private fun ProjectHeader(project: CodexProject) {
     Column(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 12.dp),
@@ -385,11 +450,20 @@ private fun ProjectHeader(project: CodexProject) {
 }
 
 @Composable
-private fun TaskCard(task: CodexTask, onClick: () -> Unit) {
+private fun TaskCard(
+    task: CodexTask,
+    onClick: () -> Unit,
+    depth: Int = 0,
+    expanded: Boolean = false,
+    visibleChildCount: Int = 0,
+    onExpand: () -> Unit = {},
+) {
     val (statusLabel, statusColor) = taskStatus(task.state)
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (16 + depth.coerceAtMost(4) * 18).dp, end = 16.dp, top = 5.dp, bottom = 5.dp),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -409,7 +483,7 @@ private fun TaskCard(task: CodexTask, onClick: () -> Unit) {
                         Spacer(Modifier.size(6.dp))
                     }
                     Text(
-                        task.name,
+                        task.agentNickname?.takeIf { task.isSubagent } ?: task.name,
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
@@ -427,6 +501,14 @@ private fun TaskCard(task: CodexTask, onClick: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(statusLabel, color = statusColor, style = MaterialTheme.typography.labelSmall)
                     Text(formatTime(task.updatedAt), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            if (visibleChildCount > 0) {
+                IconButton(onClick = onExpand) {
+                    Icon(
+                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) "收起 Subagent" else "展开 $visibleChildCount 个 Subagent",
+                    )
                 }
             }
             Icon(

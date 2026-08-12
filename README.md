@@ -31,7 +31,7 @@ $env:REMOTE_CODEX_TOKEN = "使用一个足够长的随机令牌"
 
 ## Android 客户端
 
-使用 Android Studio 打开 `Client`，等待同步后运行 `app`。最低 Android 8.0（API 26）。在首屏填写服务端输出的 `IP:端口`；若服务端配置了令牌，同时填写访问令牌。首页按项目列出 Task，点击 Task 后可在“计划、上下文、输出、活动”四个 Material 3 标签页中查看实时详情。
+使用 Android Studio 打开 `Client`，等待同步后运行 `app`。最低 Android 8.0（API 26）。在首屏填写服务端输出的 `IP:端口`；若服务端配置了令牌，同时填写访问令牌。首页按项目列出主 Task，Subagent 可从所属 Task 逐层展开，也可隐藏空闲 Task；点击任意 Task 后可在“计划、上下文、输出、活动”四个 Material 3 标签页中查看实时详情。
 
 命令行构建：
 

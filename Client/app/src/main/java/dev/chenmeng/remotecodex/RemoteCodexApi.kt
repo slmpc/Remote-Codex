@@ -104,8 +104,11 @@ class RemoteCodexApi {
             runtimeStatus = item.optString("runtimeStatus", "unknown"),
             updatedAt = item.optLong("updatedAt"),
             isSubagent = item.optBoolean("isSubagent"),
+            parentThreadId = item.optNullableString("parentThreadId"),
             agentNickname = item.optNullableString("agentNickname"),
             agentRole = item.optNullableString("agentRole"),
+            agentPath = item.optNullableString("agentPath"),
+            subagentDepth = item.optInt("subagentDepth"),
             goal = goalJson?.let {
                 GoalInfo(
                     objective = it.optString("objective"),
@@ -114,6 +117,7 @@ class RemoteCodexApi {
                     timeUsedSeconds = it.optLong("timeUsedSeconds"),
                 )
             },
+            subagents = item.optJSONArray("subagents")?.let(::parseTasks).orEmpty(),
         )
     }
 

@@ -16,9 +16,13 @@ data class CodexTask(
     val runtimeStatus: String,
     val updatedAt: Long,
     val isSubagent: Boolean,
+    val parentThreadId: String?,
     val agentNickname: String?,
     val agentRole: String?,
+    val agentPath: String?,
+    val subagentDepth: Int,
     val goal: GoalInfo?,
+    val subagents: List<CodexTask>,
 )
 
 data class ProjectSummary(

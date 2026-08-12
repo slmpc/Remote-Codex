@@ -95,6 +95,8 @@ export function parseLatestPlanFromRollout(content) {
 }
 
 export function normalizeTask(thread, goal = null, plan = null) {
+  const spawn = thread.source?.subAgent?.thread_spawn ?? null;
+  const parentThreadId = thread.parentThreadId ?? spawn?.parent_thread_id ?? null;
   const runtimeStatus = statusType(thread.status);
   const activeFlags = thread.status?.activeFlags ?? [];
   const goalStatus = goal?.status ?? null;
@@ -117,12 +119,83 @@ export function normalizeTask(thread, goal = null, plan = null) {
     runtimeStatus,
     activeFlags,
     state,
-    parentThreadId: thread.parentThreadId ?? null,
-    agentNickname: thread.agentNickname ?? null,
-    agentRole: thread.agentRole ?? null,
-    isSubagent: Boolean(thread.parentThreadId),
+    parentThreadId,
+    agentNickname: thread.agentNickname ?? spawn?.agent_nickname ?? null,
+    agentRole: thread.agentRole ?? spawn?.agent_role ?? null,
+    agentPath: thread.agentPath ?? spawn?.agent_path ?? null,
+    subagentDepth: thread.subagentDepth ?? spawn?.depth ?? 0,
+    isSubagent: Boolean(parentThreadId || spawn),
     goal,
   };
+}
+
+export function buildTaskTree(tasks) {
+  const byId = new Map(tasks.map((task) => [task.id, { ...task, subagents: [] }]));
+  const roots = [];
+
+  for (const sourceTask of tasks) {
+    const task = byId.get(sourceTask.id);
+    const parent = task.parentThreadId ? byId.get(task.parentThreadId) : null;
+    let ancestor = parent;
+    const seen = new Set();
+    let cyclic = false;
+    while (ancestor && !seen.has(ancestor.id)) {
+      if (ancestor.id === task.id) {
+        cyclic = true;
+        break;
+      }
+      seen.add(ancestor.id);
+      ancestor = ancestor.parentThreadId ? byId.get(ancestor.parentThreadId) : null;
+    }
+
+    if (parent && !cyclic) parent.subagents.push(task);
+    else roots.push(task);
+  }
+  return roots;
+}
+
+function taskBranch(root) {
+  return [root, ...root.subagents.flatMap(taskBranch)];
+}
+
+export function buildProjects(tasks) {
+  const tasksByProject = new Map();
+  for (const task of buildTaskTree(tasks).filter((item) => !item.isSubagent)) {
+    const key = task.projectPath || "";
+    const projectTasks = tasksByProject.get(key) ?? [];
+    projectTasks.push(task);
+    tasksByProject.set(key, projectTasks);
+  }
+
+  return [...tasksByProject.entries()]
+    .map(([projectPath, projectTasks]) => {
+      const allProjectTasks = projectTasks.flatMap(taskBranch);
+      return {
+        id: projectPath || "unclassified",
+        name: projectName(projectPath),
+        path: projectPath,
+        summary: {
+          total: projectTasks.filter((task) => !task.isSubagent).length,
+          running: allProjectTasks.filter((task) => task.state === "running").length,
+          waiting: allProjectTasks.filter((task) => task.state === "waiting").length,
+          subagents: allProjectTasks.filter((task) => task.isSubagent).length,
+        },
+        tasks: projectTasks,
+      };
+    })
+    .sort((a, b) => {
+      const priority = (project) => (project.summary.running > 0 ? 0 : project.summary.waiting > 0 ? 1 : 2);
+      return priority(a) - priority(b) || a.name.localeCompare(b.name);
+    });
+}
+
+function findTaskInTree(tasks, threadId) {
+  for (const task of tasks) {
+    if (task.id === threadId) return task;
+    const nested = findTaskInTree(task.subagents, threadId);
+    if (nested) return nested;
+  }
+  return null;
 }
 
 export class TaskService extends EventEmitter {
@@ -205,34 +278,11 @@ export class TaskService extends EventEmitter {
     });
 
     const count = (state) => tasks.filter((task) => task.state === state).length;
-    const tasksByProject = new Map();
-    for (const task of tasks) {
-      const key = task.projectPath || "";
-      const projectTasks = tasksByProject.get(key) ?? [];
-      projectTasks.push(task);
-      tasksByProject.set(key, projectTasks);
-    }
-    const projects = [...tasksByProject.entries()]
-      .map(([projectPath, projectTasks]) => ({
-        id: projectPath || "unclassified",
-        name: projectName(projectPath),
-        path: projectPath,
-        summary: {
-          total: projectTasks.length,
-          running: projectTasks.filter((task) => task.state === "running").length,
-          waiting: projectTasks.filter((task) => task.state === "waiting").length,
-          subagents: projectTasks.filter((task) => task.isSubagent).length,
-        },
-        tasks: projectTasks,
-      }))
-      .sort((a, b) => {
-        const priority = (project) => (project.summary.running > 0 ? 0 : project.summary.waiting > 0 ? 1 : 2);
-        return priority(a) - priority(b) || a.name.localeCompare(b.name);
-      });
+    const projects = buildProjects(tasks);
     this.#snapshot = {
       generatedAt: Date.now(),
       summary: {
-        total: tasks.length,
+        total: tasks.filter((task) => !task.isSubagent).length,
         running: count("running"),
         waiting: count("waiting"),
         errors: count("error"),
@@ -313,7 +363,7 @@ export class TaskService extends EventEmitter {
       },
       modelOutputs,
       activities,
-      subagents: this.#snapshot.tasks.filter((task) => task.parentThreadId === threadId),
+      subagents: findTaskInTree(buildTaskTree(this.#snapshot.tasks), threadId)?.subagents ?? [],
     };
   }
 
