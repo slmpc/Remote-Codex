@@ -1,0 +1,14 @@
+{
+  "name": "remote-codex-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LAN status API backed by the official Codex app-server protocol",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
