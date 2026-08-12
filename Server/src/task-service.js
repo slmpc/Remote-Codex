@@ -4,6 +4,8 @@ import path from "node:path";
 
 const LIVE_GOAL_STATUSES = new Set(["active", "paused", "usageLimited", "budgetLimited"]);
 const WAITING_GOAL_STATUSES = new Set(["paused", "blocked", "usageLimited", "budgetLimited"]);
+const ROLLOUT_ACTIVITY_WINDOW_MS = 10 * 60 * 1000;
+const TERMINAL_ROLLOUT_EVENTS = new Set(["task_complete", "turn_aborted"]);
 const ALL_THREAD_SOURCES = [
   "cli",
   "vscode",
@@ -94,7 +96,33 @@ export function parseLatestPlanFromRollout(content) {
   return null;
 }
 
-export function normalizeTask(thread, goal = null, plan = null) {
+export function parseRolloutActivity(content) {
+  const lines = content.split(/\r?\n/);
+  let lastActivityAt = null;
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    let entry;
+    try {
+      entry = JSON.parse(lines[index]);
+    } catch {
+      continue;
+    }
+
+    if (lastActivityAt === null) lastActivityAt = Date.parse(entry.timestamp) || null;
+    if (entry.type !== "event_msg") continue;
+    const eventType = entry.payload?.type;
+    if (eventType === "task_started" || TERMINAL_ROLLOUT_EVENTS.has(eventType)) {
+      return {
+        active: eventType === "task_started",
+        eventType,
+        updatedAt: lastActivityAt ?? Date.parse(entry.timestamp) ?? null,
+      };
+    }
+  }
+  return null;
+}
+
+export function normalizeTask(thread, goal = null, plan = null, rolloutActivity = null) {
   const spawn = thread.source?.subAgent?.thread_spawn ?? null;
   const parentThreadId = thread.parentThreadId ?? spawn?.parent_thread_id ?? null;
   const runtimeStatus = statusType(thread.status);
@@ -102,11 +130,15 @@ export function normalizeTask(thread, goal = null, plan = null) {
   const goalStatus = goal?.status ?? null;
   const recentlyUpdated = Date.now() - (thread.updatedAt ?? 0) * 1000 < 10 * 60 * 1000;
   const activePlan = recentlyUpdated && plan?.steps?.some((step) => step.status === "inProgress");
+  const rolloutActivityAge = Date.now() - (rolloutActivity?.updatedAt ?? 0);
+  const activeRollout = rolloutActivity?.active
+    && rolloutActivityAge >= -60_000
+    && rolloutActivityAge < ROLLOUT_ACTIVITY_WINDOW_MS;
   let state = "idle";
 
   if (runtimeStatus === "systemError") state = "error";
   else if (activeFlags.length > 0 || WAITING_GOAL_STATUSES.has(goalStatus)) state = "waiting";
-  else if (runtimeStatus === "active" || LIVE_GOAL_STATUSES.has(goalStatus) || activePlan) state = "running";
+  else if (runtimeStatus === "active" || LIVE_GOAL_STATUSES.has(goalStatus) || activePlan || activeRollout) state = "running";
 
   return {
     id: thread.id,
@@ -204,7 +236,7 @@ export class TaskService extends EventEmitter {
   #timer = null;
   #threads = new Map();
   #runtimePlans = new Map();
-  #rolloutPlans = new Map();
+  #rolloutData = new Map();
 
   constructor(codex, { refreshMs = 2500, limit = 50 } = {}) {
     super();
@@ -267,11 +299,12 @@ export class TaskService extends EventEmitter {
         }
       }),
     );
-    const plans = await Promise.all(
-      threads.map((thread) => this.#runtimePlans.get(thread.id) ?? this.#readPersistedPlan(thread.path)),
-    );
+    const rolloutData = await Promise.all(threads.map((thread) => this.#readPersistedRollout(thread.path)));
+    const plans = threads.map((thread, index) => this.#runtimePlans.get(thread.id) ?? rolloutData[index].plan);
 
-    const tasks = threads.map((thread, index) => normalizeTask(thread, goals[index], plans[index]));
+    const tasks = threads.map((thread, index) => (
+      normalizeTask(thread, goals[index], plans[index], rolloutData[index].activity)
+    ));
     tasks.sort((a, b) => {
       const priority = { running: 0, waiting: 1, error: 2, idle: 3 };
       return priority[a.state] - priority[b.state] || b.updatedAt - a.updatedAt;
@@ -301,10 +334,10 @@ export class TaskService extends EventEmitter {
     const storedThread = this.#threads.get(threadId);
     if (!summaryTask || !storedThread) return null;
 
-    const [readResult, goalResult, persistedPlan] = await Promise.all([
+    const [readResult, goalResult, persistedRollout] = await Promise.all([
       this.codex.request("thread/read", { threadId, includeTurns: true }),
       this.codex.request("thread/goal/get", { threadId }).catch(() => ({ goal: null })),
-      this.#readPersistedPlan(storedThread.path),
+      this.#readPersistedRollout(storedThread.path),
     ]);
     const thread = readResult.thread;
     const turns = thread.turns ?? [];
@@ -313,7 +346,7 @@ export class TaskService extends EventEmitter {
     );
     const latestTurn = turns.at(-1) ?? null;
     const persistedPlanItem = allItems.findLast((item) => item.type === "plan");
-    const plan = this.#runtimePlans.get(threadId) ?? persistedPlan ?? (persistedPlanItem
+    const plan = this.#runtimePlans.get(threadId) ?? persistedRollout.plan ?? (persistedPlanItem
       ? {
           explanation: null,
           steps: [{ step: persistedPlanItem.text, status: latestTurn?.status === "completed" ? "completed" : "inProgress" }],
@@ -339,7 +372,7 @@ export class TaskService extends EventEmitter {
 
     return {
       generatedAt: Date.now(),
-      task: normalizeTask(thread, goalResult.goal ?? null, plan),
+      task: normalizeTask(thread, goalResult.goal ?? null, plan, persistedRollout.activity),
       project: { name: projectName(thread.cwd), path: thread.cwd ?? "" },
       execution: {
         currentTurnStatus: latestTurn?.status ?? null,
@@ -389,17 +422,21 @@ export class TaskService extends EventEmitter {
     return null;
   }
 
-  async #readPersistedPlan(rolloutPath) {
-    if (!rolloutPath) return null;
+  async #readPersistedRollout(rolloutPath) {
+    if (!rolloutPath) return { plan: null, activity: null };
     try {
       const info = await stat(rolloutPath);
-      const cached = this.#rolloutPlans.get(rolloutPath);
-      if (cached?.mtimeMs === info.mtimeMs && cached?.size === info.size) return cached.plan;
-      const plan = parseLatestPlanFromRollout(await readFile(rolloutPath, "utf8"));
-      this.#rolloutPlans.set(rolloutPath, { mtimeMs: info.mtimeMs, size: info.size, plan });
-      return plan;
+      const cached = this.#rolloutData.get(rolloutPath);
+      if (cached?.mtimeMs === info.mtimeMs && cached?.size === info.size) return cached.data;
+      const content = await readFile(rolloutPath, "utf8");
+      const data = {
+        plan: parseLatestPlanFromRollout(content),
+        activity: parseRolloutActivity(content),
+      };
+      this.#rolloutData.set(rolloutPath, { mtimeMs: info.mtimeMs, size: info.size, data });
+      return data;
     } catch {
-      return null;
+      return { plan: null, activity: null };
     }
   }
 

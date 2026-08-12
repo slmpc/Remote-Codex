@@ -1,4 +1,4 @@
-# Remote Codex 1.2.1
+# Remote Codex 1.2.2
 
 Remote Codex 用于在 Android 手机上查看电脑正在执行的 Codex Task。电脑运行一个局域网服务，手机连接电脑 IP 后，即可按项目查看主 Task、Subagent、Plan、上下文、模型输出和执行活动。
 
@@ -15,9 +15,9 @@ Remote Codex 用于在 Android 手机上查看电脑正在执行的 Codex Task�
 
 ## 分发文件
 
-- `Remote-Codex-v1.2.1.zip`：包含下面所有内容的总发行包，转发这个文件即可。
-- `Remote-Codex-Android-v1.2.1.apk`：安装到 Android 手机。
-- `Remote-Codex-Server-v1.2.1.zip`：解压到运行 Codex 的电脑。
+- `Remote-Codex-v1.2.2.zip`：包含下面所有内容的总发行包，转发这个文件即可。
+- `Remote-Codex-Android-v1.2.2.apk`：安装到 Android 手机。
+- `Remote-Codex-Server-v1.2.2.zip`：解压到运行 Codex 的电脑。
 - `SHA256SUMS.txt`：文件完整性校验值。
 
 APK 需要连接电脑端服务，不能脱离电脑单独使用。发给其他人时，最简单的方式是只发送总发行包。
@@ -57,7 +57,7 @@ codex login
 
 ### 2. 启动服务端
 
-解压 `Remote-Codex-Server-v1.2.1.zip`，双击：
+解压 `Remote-Codex-Server-v1.2.2.zip`，双击：
 
 ```text
 start-server.cmd
@@ -81,7 +81,7 @@ Windows 首次弹出防火墙提示时，允许 Node.js 在专用网络通信。
 
 ### 3. 安装 Android 客户端
 
-把 `Remote-Codex-Android-v1.2.1.apk` 发送到手机并打开安装。若 Android 拦截安装，为当前浏览器或文件管理器开启“允许安装未知应用”。
+把 `Remote-Codex-Android-v1.2.2.apk` 发送到手机并打开安装。若 Android 拦截安装，为当前浏览器或文件管理器开启“允许安装未知应用”。
 
 如果安装时提示签名冲突，请先卸载旧的测试版 Remote Codex，再安装正式版。旧 Debug APK 与正式版签名不同，不能直接覆盖。
 
@@ -98,7 +98,7 @@ Windows 首次弹出防火墙提示时，允许 Node.js 在专用网络通信。
 
 首页按项目显示主 Task。Task 状态：
 
-- “运行中”：正在执行，或 Goal、Plan 仍处于运行状态。
+- “运行中”：正在执行，或 Goal、Plan、最近输出活动仍处于运行状态。
 - “等待”：等待批准、暂停、阻塞或受限。
 - “错误”：Task 发生系统错误。
 - “空闲”：当前没有执行活动。
@@ -211,8 +211,8 @@ Android 正式签名保存在当前用户的 `%LOCALAPPDATA%\RemoteCodex\signing
 
 ## 版本信息
 
-- Remote Codex：1.2.1
-- Android versionCode：4
+- Remote Codex：1.2.2
+- Android versionCode：5
 - 最低 Android：8.0 / API 26
 - Node.js：20+
 

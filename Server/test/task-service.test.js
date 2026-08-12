@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildProjects, buildTaskTree, normalizeTask, parseLatestPlanFromRollout } from "../src/task-service.js";
+import {
+  buildProjects,
+  buildTaskTree,
+  normalizeTask,
+  parseLatestPlanFromRollout,
+  parseRolloutActivity,
+} from "../src/task-service.js";
 
 test("active goal marks a separately loaded desktop thread as running", () => {
   const task = normalizeTask(
@@ -72,6 +78,37 @@ test("a recent in-progress plan marks the task as running", () => {
     { steps: [{ step: "Build", status: "inProgress" }] },
   );
   assert.equal(task.state, "running");
+});
+
+test("recent rollout activity marks a cross-process task as running", () => {
+  const now = new Date().toISOString();
+  const activity = parseRolloutActivity([
+    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "task_started" } }),
+    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "agent_message" } }),
+  ].join("\n"));
+  const task = normalizeTask({ id: "5", status: { type: "notLoaded" } }, null, null, activity);
+  assert.equal(activity.active, true);
+  assert.equal(task.state, "running");
+});
+
+test("a terminal rollout event keeps the task idle", () => {
+  const now = new Date().toISOString();
+  const activity = parseRolloutActivity([
+    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "task_started" } }),
+    JSON.stringify({ timestamp: now, type: "event_msg", payload: { type: "task_complete" } }),
+  ].join("\n"));
+  const task = normalizeTask({ id: "6", status: { type: "notLoaded" } }, null, null, activity);
+  assert.equal(activity.active, false);
+  assert.equal(task.state, "idle");
+});
+
+test("stale rollout activity does not keep the task running", () => {
+  const oldTimestamp = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+  const activity = parseRolloutActivity(
+    JSON.stringify({ timestamp: oldTimestamp, type: "event_msg", payload: { type: "task_started" } }),
+  );
+  const task = normalizeTask({ id: "7", status: { type: "notLoaded" } }, null, null, activity);
+  assert.equal(task.state, "idle");
 });
 
 test("reads the latest update_plan call from a rollout", () => {

@@ -72,7 +72,7 @@ export class CodexAppServer extends EventEmitter {
       clientInfo: {
         name: "remote_codex",
         title: "Remote Codex",
-        version: "1.2.1",
+        version: "1.2.2",
       },
     });
     this.notify("initialized", {});
