@@ -24,6 +24,10 @@ data class MainUiState(
     val detailError: String? = null,
     val hideIdleTasks: Boolean = false,
     val newestOutputsFirst: Boolean = false,
+    val promptDraft: String = "",
+    val promptSubmitting: Boolean = false,
+    val promptMessage: String? = null,
+    val promptError: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -85,6 +89,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             detail = null,
             detailLoading = true,
             detailError = null,
+            promptDraft = "",
+            promptMessage = null,
+            promptError = null,
         )
         viewModelScope.launch { refreshDetail(taskId) }
     }
@@ -95,7 +102,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             detail = null,
             detailLoading = false,
             detailError = null,
+            promptDraft = "",
+            promptSubmitting = false,
+            promptMessage = null,
+            promptError = null,
         )
+    }
+
+    fun updatePromptDraft(value: String) {
+        _state.value = _state.value.copy(promptDraft = value, promptMessage = null, promptError = null)
+    }
+
+    fun submitPrompt(mode: String) {
+        val current = _state.value
+        val taskId = current.selectedTaskId ?: return
+        val text = current.promptDraft.trim()
+        if (text.isBlank() || current.promptSubmitting) return
+        runPromptAction(taskId, if (mode == "intervene") "Prompt 已立即发送" else "已加入 Prompt 队列") {
+            api.submitPrompt(current.endpoint, taskId, text, mode)
+        }
+    }
+
+    fun deleteQueuedPrompt(promptId: String) {
+        val current = _state.value
+        val taskId = current.selectedTaskId ?: return
+        runPromptAction(taskId, "已从队列删除", clearDraft = false) {
+            api.deleteQueuedPrompt(current.endpoint, taskId, promptId)
+        }
+    }
+
+    fun interveneQueuedPrompt(promptId: String) {
+        val current = _state.value
+        val taskId = current.selectedTaskId ?: return
+        runPromptAction(taskId, "队列 Prompt 已立即发送", clearDraft = false) {
+            api.interveneQueuedPrompt(current.endpoint, taskId, promptId)
+        }
+    }
+
+    private fun runPromptAction(
+        taskId: String,
+        successMessage: String,
+        clearDraft: Boolean = true,
+        action: () -> Unit,
+    ) {
+        _state.value = _state.value.copy(promptSubmitting = true, promptMessage = null, promptError = null)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { action() } }
+                .onSuccess {
+                    if (_state.value.selectedTaskId == taskId) {
+                        _state.value = _state.value.copy(
+                            promptDraft = if (clearDraft) "" else _state.value.promptDraft,
+                            promptSubmitting = false,
+                            promptMessage = successMessage,
+                            promptError = null,
+                        )
+                        refreshDetail(taskId)
+                    }
+                }
+                .onFailure { error ->
+                    if (_state.value.selectedTaskId == taskId) {
+                        _state.value = _state.value.copy(
+                            promptSubmitting = false,
+                            promptMessage = null,
+                            promptError = error.message ?: "Prompt 操作失败",
+                        )
+                    }
+                }
+        }
     }
 
     private suspend fun refresh() {

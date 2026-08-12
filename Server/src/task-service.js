@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { PromptQueueStore } from "./prompt-queue.js";
 
 const LIVE_GOAL_STATUSES = new Set(["active", "paused", "usageLimited", "budgetLimited"]);
 const WAITING_GOAL_STATUSES = new Set(["paused", "blocked", "usageLimited", "budgetLimited"]);
@@ -237,16 +238,19 @@ export class TaskService extends EventEmitter {
   #threads = new Map();
   #runtimePlans = new Map();
   #rolloutData = new Map();
+  #dispatchingPrompts = new Set();
 
-  constructor(codex, { refreshMs = 2500, limit = 50 } = {}) {
+  constructor(codex, { refreshMs = 2500, limit = 50, promptQueue = new PromptQueueStore() } = {}) {
     super();
     this.codex = codex;
+    this.promptQueue = promptQueue;
     this.codex.on("error", (error) => this.emit("error", error));
     this.refreshMs = refreshMs;
     this.limit = limit;
   }
 
   async start() {
+    await this.promptQueue.load();
     await this.codex.start();
     this.codex.on("notification", ({ method, params }) => {
       if (method === "turn/plan/updated") {
@@ -259,6 +263,9 @@ export class TaskService extends EventEmitter {
           updatedAt: Date.now(),
           source: "live",
         });
+      }
+      if (method === "turn/completed" && params?.threadId) {
+        this.#dispatchQueuedPrompt(params.threadId).catch((error) => this.emit("error", error));
       }
       if (/^(thread|turn)\//.test(method)) this.refresh().catch(() => {});
     });
@@ -325,7 +332,43 @@ export class TaskService extends EventEmitter {
       tasks,
     };
     this.emit("snapshot", this.#snapshot);
+    for (const threadId of this.promptQueue.threadIds()) {
+      this.#dispatchQueuedPrompt(threadId).catch((error) => this.emit("error", error));
+    }
     return this.#snapshot;
+  }
+
+  async submitPrompt(threadId, text, mode) {
+    const prompt = text?.trim();
+    if (!prompt) throw Object.assign(new Error("Prompt 不能为空"), { statusCode: 400 });
+    if (mode === "intervene") {
+      const result = await this.#sendNow(threadId, prompt);
+      return { ...result, queue: this.promptQueue.list(threadId) };
+    }
+    if (mode !== "queue") throw Object.assign(new Error("未知的 Prompt 操作"), { statusCode: 400 });
+
+    const activeTurn = await this.#readActiveTurn(threadId);
+    const queued = await this.promptQueue.add(threadId, prompt);
+    const dispatched = activeTurn ? false : await this.#dispatchQueuedPrompt(threadId);
+    return {
+      action: dispatched ? "started" : "queued",
+      prompt: queued,
+      queue: this.promptQueue.list(threadId),
+    };
+  }
+
+  async removeQueuedPrompt(threadId, promptId) {
+    const removed = await this.promptQueue.remove(threadId, promptId);
+    if (!removed) throw Object.assign(new Error("队列中的 Prompt 不存在"), { statusCode: 404 });
+    return { removed, queue: this.promptQueue.list(threadId) };
+  }
+
+  async interveneWithQueuedPrompt(threadId, promptId) {
+    const prompt = this.promptQueue.list(threadId).find((item) => item.id === promptId);
+    if (!prompt) throw Object.assign(new Error("队列中的 Prompt 不存在"), { statusCode: 404 });
+    const result = await this.#sendNow(threadId, prompt.text);
+    await this.promptQueue.remove(threadId, promptId);
+    return { ...result, queue: this.promptQueue.list(threadId) };
   }
 
   async detail(threadId) {
@@ -368,6 +411,19 @@ export class TaskService extends EventEmitter {
       .filter((item) => item.type === "agentMessage" && item.text)
       .map((item) => ({ id: item.id, turnId: item.turnId, text: item.text, phase: item.phase ?? null }))
       .slice(-40);
+    const conversation = allItems
+      .filter((item) => item.type === "userMessage" || (item.type === "agentMessage" && item.text))
+      .map((item) => ({
+        id: item.id,
+        turnId: item.turnId,
+        role: item.type === "userMessage" ? "user" : "assistant",
+        text: item.type === "userMessage"
+          ? (item.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("\n")
+          : item.text,
+        phase: item.type === "agentMessage" ? item.phase ?? null : null,
+      }))
+      .filter((item) => item.text)
+      .slice(-80);
     const activities = allItems.map((item) => this.#activity(item)).filter(Boolean).slice(-40);
 
     return {
@@ -395,9 +451,63 @@ export class TaskService extends EventEmitter {
         compactionCount: allItems.filter((item) => item.type === "contextCompaction").length,
       },
       modelOutputs,
+      conversation,
       activities,
+      promptQueue: this.promptQueue.list(threadId),
       subagents: findTaskInTree(buildTaskTree(this.#snapshot.tasks), threadId)?.subagents ?? [],
     };
+  }
+
+  async #readActiveTurn(threadId) {
+    let result;
+    try {
+      result = await this.codex.request("thread/read", { threadId, includeTurns: true });
+    } catch (error) {
+      throw Object.assign(new Error(`无法读取 Task：${error.message}`), { statusCode: 404 });
+    }
+    const turns = result?.thread?.turns ?? [];
+    return turns.findLast((turn) => turn.status === "inProgress") ?? null;
+  }
+
+  async #sendNow(threadId, text) {
+    const activeTurn = await this.#readActiveTurn(threadId);
+    if (activeTurn) {
+      const result = await this.codex.request("turn/steer", {
+        threadId,
+        expectedTurnId: activeTurn.id,
+        input: [{ type: "text", text }],
+      });
+      return { action: "intervened", turnId: result.turnId };
+    }
+
+    const result = await this.codex.request("turn/start", {
+      threadId,
+      input: [{ type: "text", text }],
+    });
+    return { action: "started", turnId: result.turn?.id ?? null };
+  }
+
+  async #dispatchQueuedPrompt(threadId) {
+    if (this.#dispatchingPrompts.has(threadId)) return false;
+    const prompt = this.promptQueue.list(threadId)[0];
+    if (!prompt) return false;
+
+    this.#dispatchingPrompts.add(threadId);
+    try {
+      if (await this.#readActiveTurn(threadId)) return false;
+      await this.codex.request("turn/start", {
+        threadId,
+        input: [{ type: "text", text: prompt.text }],
+      });
+      await this.promptQueue.remove(threadId, prompt.id);
+      this.refresh().catch(() => {});
+      return true;
+    } catch (error) {
+      if (error.statusCode === 404) this.emit("error", error);
+      return false;
+    } finally {
+      this.#dispatchingPrompts.delete(threadId);
+    }
   }
 
   #activity(item) {

@@ -81,12 +81,26 @@ data class ModelOutput(
     val phase: String?,
 )
 
+data class ConversationMessage(
+    val id: String,
+    val turnId: String,
+    val role: String,
+    val text: String,
+    val phase: String?,
+)
+
 data class TaskActivity(
     val id: String,
     val type: String,
     val title: String,
     val status: String,
     val detail: String?,
+)
+
+data class QueuedPrompt(
+    val id: String,
+    val text: String,
+    val createdAt: Long,
 )
 
 data class GitInfo(val branch: String?, val sha: String?, val originUrl: String?)
@@ -112,6 +126,8 @@ data class TaskDetail(
     val plan: TaskPlan?,
     val context: TaskContext,
     val modelOutputs: List<ModelOutput>,
+    val conversation: List<ConversationMessage>,
     val activities: List<TaskActivity>,
+    val promptQueue: List<QueuedPrompt>,
     val subagents: List<CodexTask>,
 )

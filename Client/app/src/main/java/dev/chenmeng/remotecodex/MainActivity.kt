@@ -15,25 +15,31 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Pending
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Update
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
@@ -46,22 +52,26 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -126,6 +136,10 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
             onRefresh = viewModel::refreshNow,
             onTaskClick = viewModel::openTask,
             onNewestOutputsFirstChange = viewModel::setNewestOutputsFirst,
+            onPromptChange = viewModel::updatePromptDraft,
+            onSubmitPrompt = viewModel::submitPrompt,
+            onDeleteQueuedPrompt = viewModel::deleteQueuedPrompt,
+            onInterveneQueuedPrompt = viewModel::interveneQueuedPrompt,
         )
     } else {
         ProjectListScreen(
@@ -207,12 +221,16 @@ private fun TaskDetailScreen(
     onRefresh: () -> Unit,
     onTaskClick: (String) -> Unit,
     onNewestOutputsFirstChange: (Boolean) -> Unit,
+    onPromptChange: (String) -> Unit,
+    onSubmitPrompt: (String) -> Unit,
+    onDeleteQueuedPrompt: (String) -> Unit,
+    onInterveneQueuedPrompt: (String) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf(
         DetailTab("计划", Icons.Default.AccountTree),
+        DetailTab("对话", Icons.AutoMirrored.Filled.Send),
         DetailTab("上下文", Icons.Default.Description),
-        DetailTab("输出", Icons.Default.SmartToy),
         DetailTab("活动", Icons.Default.Terminal),
     )
     val detail = state.detail
@@ -254,17 +272,16 @@ private fun TaskDetailScreen(
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                 )
                 if (detail != null) {
-                    ScrollableTabRow(
+                    TabRow(
                         selectedTabIndex = selectedTab,
                         containerColor = MaterialTheme.colorScheme.background,
-                        edgePadding = 8.dp,
                     ) {
                         tabs.forEachIndexed { index, tab ->
                             Tab(
                                 selected = selectedTab == index,
                                 onClick = { selectedTab = index },
-                                icon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                text = { Text(tab.label) },
+                                icon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                                text = { Text(tab.label, maxLines = 1) },
                             )
                         }
                     }
@@ -275,13 +292,18 @@ private fun TaskDetailScreen(
         when {
             detail != null -> when (selectedTab) {
                 0 -> PlanTab(detail, Modifier.padding(padding), onTaskClick)
-                1 -> ContextTab(detail, Modifier.padding(padding))
-                2 -> OutputTab(
+                1 -> ConversationTab(
+                    state = state,
                     detail = detail,
                     modifier = Modifier.padding(padding),
                     newestFirst = state.newestOutputsFirst,
                     onNewestFirstChange = onNewestOutputsFirstChange,
+                    onPromptChange = onPromptChange,
+                    onSubmitPrompt = onSubmitPrompt,
+                    onDeleteQueuedPrompt = onDeleteQueuedPrompt,
+                    onInterveneQueuedPrompt = onInterveneQueuedPrompt,
                 )
+                2 -> ContextTab(detail, Modifier.padding(padding))
                 else -> ActivityTab(detail, Modifier.padding(padding))
             }
             state.detailLoading -> Box(
@@ -291,6 +313,233 @@ private fun TaskDetailScreen(
             else -> ErrorState(state.detailError ?: "无法获取 Task 详情", Modifier.padding(padding), onRefresh)
         }
     }
+}
+
+@Composable
+private fun ConversationTab(
+    state: MainUiState,
+    detail: TaskDetail,
+    modifier: Modifier,
+    newestFirst: Boolean,
+    onNewestFirstChange: (Boolean) -> Unit,
+    onPromptChange: (String) -> Unit,
+    onSubmitPrompt: (String) -> Unit,
+    onDeleteQueuedPrompt: (String) -> Unit,
+    onInterveneQueuedPrompt: (String) -> Unit,
+) {
+    val messages = if (newestFirst) detail.conversation.asReversed() else detail.conversation
+    val listState = rememberLazyListState()
+    var followBottom by remember(detail.task.id) { mutableStateOf(true) }
+    var previousNewestFirst by remember(detail.task.id) { mutableStateOf<Boolean?>(null) }
+    var previousMessageCount by remember(detail.task.id) { mutableIntStateOf(0) }
+    val itemCount = 2 + maxOf(messages.size, 1)
+
+    LaunchedEffect(listState, newestFirst) {
+        snapshotFlow {
+            val layout = listState.layoutInfo
+            Triple(listState.isScrollInProgress, layout.visibleItemsInfo.lastOrNull()?.index, layout.totalItemsCount)
+        }.collect { (scrolling, lastVisible, total) ->
+            if (!newestFirst && scrolling && total > 0) {
+                followBottom = lastVisible != null && lastVisible >= total - 1
+            }
+        }
+    }
+    LaunchedEffect(newestFirst, detail.conversation.size, detail.task.id) {
+        val switchedToChronological = previousNewestFirst != false && !newestFirst
+        val switchedToNewestFirst = previousNewestFirst == false && newestFirst
+        val messagesAdded = detail.conversation.size > previousMessageCount
+        previousNewestFirst = newestFirst
+        previousMessageCount = detail.conversation.size
+        when {
+            switchedToNewestFirst -> listState.scrollToItem(0)
+            !newestFirst && (switchedToChronological || messagesAdded && followBottom) -> {
+                listState.scrollToItem(itemCount - 1)
+            }
+        }
+    }
+
+    Column(modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            state = listState,
+            contentPadding = PaddingValues(bottom = 12.dp),
+        ) {
+            item { SectionTitle("对话 · ${detail.conversation.size}") }
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("最新消息优先", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            if (newestFirst) "新输入和输出显示在顶部" else "按对话产生顺序显示",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = newestFirst, onCheckedChange = onNewestFirstChange)
+                }
+            }
+            if (messages.isEmpty()) item { EmptyBand("这个 Task 还没有对话内容") }
+            items(messages, key = { "message-${it.id}" }) { message ->
+                ConversationMessageBand(message)
+            }
+        }
+        PromptDock(
+            state = state,
+            taskId = detail.task.id,
+            promptQueue = detail.promptQueue,
+            onPromptChange = onPromptChange,
+            onSubmitPrompt = onSubmitPrompt,
+            onDeleteQueuedPrompt = onDeleteQueuedPrompt,
+            onInterveneQueuedPrompt = onInterveneQueuedPrompt,
+        )
+    }
+}
+
+@Composable
+private fun PromptDock(
+    state: MainUiState,
+    taskId: String,
+    promptQueue: List<QueuedPrompt>,
+    onPromptChange: (String) -> Unit,
+    onSubmitPrompt: (String) -> Unit,
+    onDeleteQueuedPrompt: (String) -> Unit,
+    onInterveneQueuedPrompt: (String) -> Unit,
+) {
+    var queueExpanded by rememberSaveable(taskId) { mutableStateOf(false) }
+    LaunchedEffect(promptQueue.isEmpty()) {
+        if (promptQueue.isEmpty()) queueExpanded = false
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .imePadding(),
+    ) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.size(9.dp))
+            Text("Prompt 队列 · ${promptQueue.size}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            IconButton(
+                onClick = { queueExpanded = !queueExpanded },
+                enabled = promptQueue.isNotEmpty(),
+            ) {
+                Icon(
+                    if (queueExpanded) Icons.Default.ExpandLess else Icons.Default.ChevronRight,
+                    contentDescription = if (queueExpanded) "收起 Prompt 队列" else "管理 Prompt 队列",
+                )
+            }
+        }
+        if (queueExpanded) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
+                items(promptQueue, key = { "managed-${it.id}" }) { prompt ->
+                    QueuedPromptRow(
+                        prompt = prompt,
+                        actionsEnabled = !state.promptSubmitting,
+                        onIntervene = { onInterveneQueuedPrompt(prompt.id) },
+                        onDelete = { onDeleteQueuedPrompt(prompt.id) },
+                    )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+        }
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+        OutlinedTextField(
+            value = state.promptDraft,
+            onValueChange = onPromptChange,
+            label = { Text("Prompt") },
+            minLines = 1,
+            maxLines = 5,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !state.promptSubmitting,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { onSubmitPrompt("intervene") },
+                enabled = state.promptDraft.isNotBlank() && !state.promptSubmitting,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("立即干预")
+            }
+            FilledTonalButton(
+                onClick = { onSubmitPrompt("queue") },
+                enabled = state.promptDraft.isNotBlank() && !state.promptSubmitting,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("结束后继续")
+            }
+        }
+        when {
+            state.promptSubmitting -> Text("正在提交", style = MaterialTheme.typography.labelSmall)
+            state.promptError != null -> Text(state.promptError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+            state.promptMessage != null -> Text(state.promptMessage, color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelSmall)
+        }
+        }
+    }
+}
+
+@Composable
+private fun ConversationMessageBand(message: ConversationMessage) {
+    val isUser = message.role == "user"
+    MessageBand(
+        label = when {
+            isUser -> "YOU"
+            message.phase == "commentary" -> "PROGRESS"
+            message.phase == "final_answer" -> "FINAL"
+            else -> "ASSISTANT"
+        },
+        text = message.text,
+        accent = when {
+            isUser -> MaterialTheme.colorScheme.primary
+            message.phase == "final_answer" -> MaterialTheme.colorScheme.secondary
+            else -> MaterialTheme.colorScheme.tertiary
+        },
+    )
+}
+
+@Composable
+private fun QueuedPromptRow(
+    prompt: QueuedPrompt,
+    actionsEnabled: Boolean,
+    onIntervene: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(prompt.text, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                formatTime(prompt.createdAt / 1000),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onIntervene, enabled = actionsEnabled) {
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "立即发送")
+        }
+        IconButton(onClick = onDelete, enabled = actionsEnabled) {
+            Icon(Icons.Default.Delete, contentDescription = "删除队列 Prompt")
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
 }
 
 private data class DetailTab(val label: String, val icon: ImageVector)
@@ -639,57 +888,6 @@ private fun ContextTab(detail: TaskDetail, modifier: Modifier) {
                     ),
                 )
             }
-        }
-        item { SectionTitle("用户上下文") }
-        if (detail.context.userMessages.isEmpty()) item { EmptyBand("没有可见的用户上下文") }
-        items(detail.context.userMessages, key = { it.id }) { message ->
-            MessageBand(label = "USER", text = message.text, accent = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@Composable
-private fun OutputTab(
-    detail: TaskDetail,
-    modifier: Modifier,
-    newestFirst: Boolean,
-    onNewestFirstChange: (Boolean) -> Unit,
-) {
-    val outputs = if (newestFirst) detail.modelOutputs.asReversed() else detail.modelOutputs
-    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
-        item {
-            SectionTitle("模型输出 · ${detail.modelOutputs.size}")
-        }
-        item {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("最新输出优先", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        if (newestFirst) "最新内容显示在顶部" else "按产生时间从上到下显示",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = newestFirst, onCheckedChange = onNewestFirstChange)
-            }
-        }
-        if (detail.modelOutputs.isEmpty()) item { EmptyBand("模型还没有输出") }
-        items(outputs, key = { it.id }) { output ->
-            MessageBand(
-                label = when (output.phase) {
-                    "commentary" -> "PROGRESS"
-                    "final_answer" -> "FINAL"
-                    else -> "ASSISTANT"
-                },
-                text = output.text,
-                accent = if (output.phase == "final_answer") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary,
-            )
         }
     }
 }

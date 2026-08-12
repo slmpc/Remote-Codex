@@ -16,12 +16,39 @@ class RemoteCodexApi {
         return parseDetail(getJson(endpoint, "/api/tasks/$encodedId"))
     }
 
+    fun submitPrompt(endpoint: String, taskId: String, text: String, mode: String) {
+        val encodedId = encode(taskId)
+        requestJson(
+            endpoint,
+            "/api/tasks/$encodedId/prompts",
+            "POST",
+            JSONObject().put("text", text).put("mode", mode).toString(),
+        )
+    }
+
+    fun deleteQueuedPrompt(endpoint: String, taskId: String, promptId: String) {
+        requestJson(endpoint, "/api/tasks/${encode(taskId)}/prompts/${encode(promptId)}", "DELETE")
+    }
+
+    fun interveneQueuedPrompt(endpoint: String, taskId: String, promptId: String) {
+        requestJson(endpoint, "/api/tasks/${encode(taskId)}/prompts/${encode(promptId)}/intervene", "POST", "{}")
+    }
+
     private fun getJson(endpoint: String, path: String): JSONObject {
+        return requestJson(endpoint, path, "GET")
+    }
+
+    private fun requestJson(endpoint: String, path: String, method: String, body: String? = null): JSONObject {
         val connection = URL("${normalizeEndpoint(endpoint)}$path").openConnection() as HttpURLConnection
-        connection.requestMethod = "GET"
+        connection.requestMethod = method
         connection.connectTimeout = 4_000
         connection.readTimeout = 12_000
         connection.setRequestProperty("Accept", "application/json")
+        if (body != null) {
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+        }
 
         return try {
             val status = connection.responseCode
@@ -36,6 +63,8 @@ class RemoteCodexApi {
             connection.disconnect()
         }
     }
+
+    private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
     private fun normalizeEndpoint(value: String): String {
         var result = value.trim().removeSuffix("/")
@@ -175,6 +204,15 @@ class RemoteCodexApi {
                     phase = it.optNullableString("phase"),
                 )
             },
+            conversation = root.optJSONArray("conversation")?.mapObjects {
+                ConversationMessage(
+                    id = it.getString("id"),
+                    turnId = it.optString("turnId"),
+                    role = it.optString("role", "assistant"),
+                    text = it.optString("text"),
+                    phase = it.optNullableString("phase"),
+                )
+            }.orEmpty(),
             activities = root.getJSONArray("activities").mapObjects {
                 TaskActivity(
                     id = it.getString("id"),
@@ -184,6 +222,13 @@ class RemoteCodexApi {
                     detail = it.optNullableString("detail"),
                 )
             },
+            promptQueue = root.optJSONArray("promptQueue")?.mapObjects {
+                QueuedPrompt(
+                    id = it.getString("id"),
+                    text = it.optString("text"),
+                    createdAt = it.optLong("createdAt"),
+                )
+            }.orEmpty(),
             subagents = parseTasks(root.getJSONArray("subagents")),
         )
     }

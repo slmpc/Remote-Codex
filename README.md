@@ -1,6 +1,6 @@
-# Remote Codex 1.2.2
+# Remote Codex 1.3.0
 
-Remote Codex 用于在 Android 手机上查看电脑正在执行的 Codex Task。电脑运行一个局域网服务，手机连接电脑 IP 后，即可按项目查看主 Task、Subagent、Plan、上下文、模型输出和执行活动。
+Remote Codex 用于在 Android 手机上查看和干预电脑正在执行的 Codex Task。电脑运行一个局域网服务，手机连接电脑 IP 后，即可按项目查看主 Task、Subagent、Plan、统一对话和执行活动。
 
 ## 功能
 
@@ -8,16 +8,18 @@ Remote Codex 用于在 Android 手机上查看电脑正在执行的 Codex Task�
 - 项目顶层只显示主 Task。
 - 从主 Task 递归展开多层 Subagent。
 - 点击任意 Task 或 Subagent 查看独立执行状态。
-- 查看 Plan、Goal、上下文、模型输出和工具活动。
+- 查看 Plan、Goal、运行上下文、输入输出对话和工具活动。
+- 立即发送 Prompt 干预运行中的 Task。
+- 将 Prompt 加入队列，当前 Turn 结束后自动继续；队列项可删除或改为立即干预。
 - 隐藏空闲 Task，并保留包含活跃 Subagent 的父 Task。
 - 每 2.5 秒自动刷新。
 - Material 3 界面，跟随系统浅色或深色主题。
 
 ## 分发文件
 
-- `Remote-Codex-v1.2.2.zip`：包含下面所有内容的总发行包，转发这个文件即可。
-- `Remote-Codex-Android-v1.2.2.apk`：安装到 Android 手机。
-- `Remote-Codex-Server-v1.2.2.zip`：解压到运行 Codex 的电脑。
+- `Remote-Codex-v1.3.0.zip`：包含下面所有内容的总发行包，转发这个文件即可。
+- `Remote-Codex-Android-v1.3.0.apk`：安装到 Android 手机。
+- `Remote-Codex-Server-v1.3.0.zip`：解压到运行 Codex 的电脑。
 - `SHA256SUMS.txt`：文件完整性校验值。
 
 APK 需要连接电脑端服务，不能脱离电脑单独使用。发给其他人时，最简单的方式是只发送总发行包。
@@ -57,7 +59,7 @@ codex login
 
 ### 2. 启动服务端
 
-解压 `Remote-Codex-Server-v1.2.2.zip`，双击：
+解压 `Remote-Codex-Server-v1.3.0.zip`，双击：
 
 ```text
 start-server.cmd
@@ -81,7 +83,7 @@ Windows 首次弹出防火墙提示时，允许 Node.js 在专用网络通信。
 
 ### 3. 安装 Android 客户端
 
-把 `Remote-Codex-Android-v1.2.2.apk` 发送到手机并打开安装。若 Android 拦截安装，为当前浏览器或文件管理器开启“允许安装未知应用”。
+把 `Remote-Codex-Android-v1.3.0.apk` 发送到手机并打开安装。若 Android 拦截安装，为当前浏览器或文件管理器开启“允许安装未知应用”。
 
 如果安装时提示签名冲突，请先卸载旧的测试版 Remote Codex，再安装正式版。旧 Debug APK 与正式版签名不同，不能直接覆盖。
 
@@ -108,13 +110,13 @@ Windows 首次弹出防火墙提示时，允许 Node.js 在专用网络通信。
 详情页包括：
 
 - “计划”：Plan 步骤、执行统计、Goal 和直接 Subagent。
-- “上下文”：项目目录、来源、Codex 版本、Git 信息和用户消息。
-- “输出”：模型对用户可见的输出。
+- “对话”：用户输入、模型输出、Prompt 输入框和待发送队列。
+- “上下文”：项目目录、来源、Codex 版本和 Git 信息。
 - “活动”：命令、文件修改、MCP 和 Subagent 等工具活动。
 
 “隐藏空闲 Task”开启后，空闲 Task 会隐藏。如果父 Task 自身空闲但子 Subagent 正在运行，父 Task仍会显示，避免丢失活跃任务入口。
 
-“输出”页可开启“最新输出优先”，将最新模型输出移到列表顶部。该选择会保存在手机中，并应用于所有 Task。
+“对话”页可开启“最新消息优先”，将最新输入和输出移到上方。关闭时按对话顺序显示并默认滚动到最下面；新消息到达时，只有当前位于底部才自动跟随。该选择会保存在手机中，并应用于所有 Task。
 
 ## 更换端口
 
@@ -164,7 +166,9 @@ codex login status
 
 ## 数据说明
 
-服务端通过 Codex `app-server` 读取当前 Windows 用户的线程信息。它只提供查看接口，不会从手机执行命令、创建 Task、修改文件或操作 Git。
+服务端通过 Codex `app-server` 读取当前 Windows 用户的线程信息，并允许手机向已有 Task 发送 Prompt。“立即发送”会干预运行中的 Turn；Task 空闲时则直接开始新 Turn。也可以把 Prompt 加入队列，在当前 Turn 结束后自动继续。
+
+Prompt 队列保存在电脑当前用户的本地应用数据目录（Windows 默认为 `%LOCALAPPDATA%\RemoteCodex\prompt-queue.json`）。队列项可以在发送前删除；Task 运行时也可以把队列项改为立即干预。服务端仅通过 Codex 执行 Prompt，不直接提供任意命令或文件操作接口。
 
 详情页可能显示工作目录、用户提示、模型输出、命令结果和 Git 信息。只建议在自己的局域网中使用，不要将端口映射到公网。
 
@@ -175,12 +179,23 @@ codex login status
 - `GET /healthz`：服务健康状态和版本。
 - `GET /api/status`：项目、主 Task、Subagent 树和状态汇总。
 - `GET /api/tasks/{threadId}`：单个 Task 详情。
+- `POST /api/tasks/{threadId}/prompts`：发送 Prompt；`mode` 为 `intervene` 或 `queue`。
+- `DELETE /api/tasks/{threadId}/prompts/{promptId}`：删除待发送 Prompt。
+- `POST /api/tasks/{threadId}/prompts/{promptId}/intervene`：将队列项立即改为干预。
 - `GET /api/events`：SSE 状态流。
 
 示例：
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8787/api/status
+```
+
+立即干预运行中的 Task：
+
+```powershell
+$body = @{ text = "先停止当前方向，优先修复编译错误"; mode = "intervene" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -ContentType "application/json" -Body $body `
+  http://127.0.0.1:8787/api/tasks/<threadId>/prompts
 ```
 
 ## 开发和构建
@@ -211,8 +226,8 @@ Android 正式签名保存在当前用户的 `%LOCALAPPDATA%\RemoteCodex\signing
 
 ## 版本信息
 
-- Remote Codex：1.2.2
-- Android versionCode：5
+- Remote Codex：1.3.0
+- Android versionCode：6
 - 最低 Android：8.0 / API 26
 - Node.js：20+
 

@@ -5,7 +5,7 @@ import { TaskService } from "./task-service.js";
 
 const host = process.env.REMOTE_CODEX_HOST ?? "0.0.0.0";
 const port = Number(process.env.REMOTE_CODEX_PORT ?? 8787);
-const version = "1.2.2";
+const version = "1.3.0";
 const clients = new Set();
 const taskService = new TaskService(new CodexAppServer());
 
@@ -23,6 +23,25 @@ function writeJson(response, status, value) {
     "Cache-Control": "no-store",
   });
   response.end(body);
+}
+
+async function readJson(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > 64 * 1024) throw Object.assign(new Error("请求内容过大"), { statusCode: 413 });
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    throw Object.assign(new Error("JSON 格式无效"), { statusCode: 400 });
+  }
+}
+
+function writeError(response, error) {
+  return writeJson(response, error.statusCode ?? 503, { error: error.message });
 }
 
 function broadcast(snapshot) {
@@ -62,6 +81,47 @@ const server = http.createServer(async (request, response) => {
         : writeJson(response, 404, { error: "Task not found" });
     } catch (error) {
       return writeJson(response, 503, { error: error.message });
+    }
+  }
+
+  const promptMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/prompts$/);
+  if (request.method === "POST" && promptMatch) {
+    try {
+      const body = await readJson(request);
+      const result = await taskService.submitPrompt(
+        decodeURIComponent(promptMatch[1]),
+        body.text,
+        body.mode,
+      );
+      return writeJson(response, 200, result);
+    } catch (error) {
+      return writeError(response, error);
+    }
+  }
+
+  const queuedPromptMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/prompts\/([^/]+)$/);
+  if (request.method === "DELETE" && queuedPromptMatch) {
+    try {
+      const result = await taskService.removeQueuedPrompt(
+        decodeURIComponent(queuedPromptMatch[1]),
+        decodeURIComponent(queuedPromptMatch[2]),
+      );
+      return writeJson(response, 200, result);
+    } catch (error) {
+      return writeError(response, error);
+    }
+  }
+
+  const intervenePromptMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/prompts\/([^/]+)\/intervene$/);
+  if (request.method === "POST" && intervenePromptMatch) {
+    try {
+      const result = await taskService.interveneWithQueuedPrompt(
+        decodeURIComponent(intervenePromptMatch[1]),
+        decodeURIComponent(intervenePromptMatch[2]),
+      );
+      return writeJson(response, 200, result);
+    } catch (error) {
+      return writeError(response, error);
     }
   }
 
