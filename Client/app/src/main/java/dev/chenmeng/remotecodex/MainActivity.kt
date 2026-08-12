@@ -2,6 +2,7 @@ package dev.chenmeng.remotecodex
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -21,18 +22,31 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Pending
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -40,10 +54,15 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +88,7 @@ private val LightColors = lightColorScheme(
     tertiary = Color(0xFFD97706),
     background = Color(0xFFF5F7F8),
     surface = Color.White,
+    surfaceVariant = Color(0xFFE9EDF0),
     error = Color(0xFFB42318),
 )
 
@@ -79,6 +99,7 @@ private val DarkColors = darkColorScheme(
     tertiary = Color(0xFFF2B84B),
     background = Color(0xFF101417),
     surface = Color(0xFF1A2024),
+    surfaceVariant = Color(0xFF283036),
     error = Color(0xFFFF8A80),
 )
 
@@ -92,25 +113,43 @@ private fun RemoteCodexTheme(content: @Composable () -> Unit) {
 @Composable
 private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    BackHandler(enabled = state.selectedTaskId != null, onBack = viewModel::closeTask)
+
+    if (state.selectedTaskId != null) {
+        TaskDetailScreen(
+            state = state,
+            onBack = viewModel::closeTask,
+            onRefresh = viewModel::refreshNow,
+            onTaskClick = viewModel::openTask,
+        )
+    } else {
+        ProjectListScreen(
+            state = state,
+            onEndpointChange = viewModel::updateEndpoint,
+            onTokenChange = viewModel::updateToken,
+            onConnect = viewModel::connect,
+            onRefresh = viewModel::refreshNow,
+            onTaskClick = viewModel::openTask,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProjectListScreen(
+    state: MainUiState,
+    onEndpointChange: (String) -> Unit,
+    onTokenChange: (String) -> Unit,
+    onConnect: () -> Unit,
+    onRefresh: () -> Unit,
+    onTaskClick: (String) -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier
-                                .size(9.dp)
-                                .background(
-                                    if (state.connected) MaterialTheme.colorScheme.secondary else Color(0xFF98A2B3),
-                                    CircleShape,
-                                ),
-                        )
-                        Spacer(Modifier.size(10.dp))
-                        Text("Remote Codex", fontWeight = FontWeight.SemiBold)
-                    }
-                },
+                title = { ConnectionTitle(state.connected) },
                 actions = {
-                    IconButton(onClick = viewModel::refreshNow, enabled = !state.connecting) {
+                    IconButton(onClick = onRefresh, enabled = !state.connecting) {
                         Icon(Icons.Default.Refresh, contentDescription = "刷新")
                     }
                 },
@@ -123,27 +162,122 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             item {
-                ConnectionPanel(
-                    state = state,
-                    onEndpointChange = viewModel::updateEndpoint,
-                    onTokenChange = viewModel::updateToken,
-                    onConnect = viewModel::connect,
-                )
+                ConnectionPanel(state, onEndpointChange, onTokenChange, onConnect)
             }
             state.snapshot?.let { snapshot ->
                 item { SummaryBand(snapshot.summary, snapshot.generatedAt) }
-                items(snapshot.tasks, key = { it.id }) { task ->
-                    TaskCard(task)
-                }
-            }
-            if (state.connecting) {
-                item {
-                    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                snapshot.projects.forEach { project ->
+                    item(key = "project-${project.id}") { ProjectHeader(project) }
+                    items(project.tasks, key = { it.id }) { task ->
+                        TaskCard(task = task, onClick = { onTaskClick(task.id) })
                     }
                 }
             }
+            if (state.connecting) item { LoadingBand() }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskDetailScreen(
+    state: MainUiState,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onTaskClick: (String) -> Unit,
+) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val tabs = listOf(
+        DetailTab("计划", Icons.Default.AccountTree),
+        DetailTab("上下文", Icons.Default.Description),
+        DetailTab("输出", Icons.Default.SmartToy),
+        DetailTab("活动", Icons.Default.Terminal),
+    )
+    val detail = state.detail
+
+    Scaffold(
+        topBar = {
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                detail?.task?.name ?: "Task 详情",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            detail?.let {
+                                Text(
+                                    it.projectName,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = onRefresh, enabled = !state.detailLoading) {
+                            Icon(Icons.Default.Refresh, contentDescription = "刷新详情")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
+                if (detail != null) {
+                    ScrollableTabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = MaterialTheme.colorScheme.background,
+                        edgePadding = 8.dp,
+                    ) {
+                        tabs.forEachIndexed { index, tab ->
+                            Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                icon = { Icon(tab.icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                text = { Text(tab.label) },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        when {
+            detail != null -> when (selectedTab) {
+                0 -> PlanTab(detail, Modifier.padding(padding), onTaskClick)
+                1 -> ContextTab(detail, Modifier.padding(padding))
+                2 -> OutputTab(detail, Modifier.padding(padding))
+                else -> ActivityTab(detail, Modifier.padding(padding))
+            }
+            state.detailLoading -> Box(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center,
+            ) { CircularProgressIndicator() }
+            else -> ErrorState(state.detailError ?: "无法获取 Task 详情", Modifier.padding(padding), onRefresh)
+        }
+    }
+}
+
+private data class DetailTab(val label: String, val icon: ImageVector)
+
+@Composable
+private fun ConnectionTitle(connected: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(9.dp)
+                .background(if (connected) MaterialTheme.colorScheme.secondary else Color(0xFF98A2B3), CircleShape),
+        )
+        Spacer(Modifier.size(10.dp))
+        Text("Remote Codex", fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -155,10 +289,7 @@ private fun ConnectionPanel(
     onConnect: () -> Unit,
 ) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         OutlinedTextField(
@@ -204,7 +335,7 @@ private fun ConnectionPanel(
 private fun SummaryBand(summary: TaskSummary, generatedAt: Long) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("任务", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("项目与 Task", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(formatTime(generatedAt / 1000), style = MaterialTheme.typography.bodySmall)
         }
         Spacer(Modifier.height(10.dp))
@@ -226,69 +357,390 @@ private fun SummaryValue(value: Int, label: String, color: Color) {
 }
 
 @Composable
-private fun TaskCard(task: CodexTask) {
-    val (statusLabel, statusColor) = when (task.state) {
-        "running" -> "运行中" to MaterialTheme.colorScheme.secondary
-        "waiting" -> "等待" to MaterialTheme.colorScheme.tertiary
-        "error" -> "错误" to MaterialTheme.colorScheme.error
-        else -> "空闲" to Color(0xFF667085)
+private fun ProjectHeader(project: CodexProject) {
+    Column(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.size(9.dp))
+            Text(project.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Text(
+                "${project.summary.total} Tasks",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (project.path.isNotBlank()) {
+            Text(
+                project.path,
+                modifier = Modifier.padding(start = 29.dp, top = 3.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
+}
+
+@Composable
+private fun TaskCard(task: CodexTask, onClick: () -> Unit) {
+    val (statusLabel, statusColor) = taskStatus(task.state)
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (task.isSubagent) {
-                    Icon(
-                        Icons.Default.SmartToy,
-                        contentDescription = "Subagent",
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.tertiary,
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(statusColor)
+            Spacer(Modifier.size(11.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (task.isSubagent) {
+                        Icon(
+                            Icons.Default.SmartToy,
+                            contentDescription = "Subagent",
+                            modifier = Modifier.size(17.dp),
+                            tint = MaterialTheme.colorScheme.tertiary,
+                        )
+                        Spacer(Modifier.size(6.dp))
+                    }
+                    Text(
+                        task.name,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.size(7.dp))
                 }
                 Text(
-                    task.name,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    task.goal?.objective ?: task.preview,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.size(10.dp))
-                Text(statusLabel, color = statusColor, style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(statusLabel, color = statusColor, style = MaterialTheme.typography.labelSmall)
+                    Text(formatTime(task.updatedAt), style = MaterialTheme.typography.labelSmall)
+                }
             }
-            task.goal?.let {
-                Text(
-                    it.objective,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } ?: Text(
-                task.preview,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = "查看详情",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    task.agentNickname ?: task.source,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    formatTime(task.updatedAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+    }
+}
+
+@Composable
+private fun PlanTab(detail: TaskDetail, modifier: Modifier, onTaskClick: (String) -> Unit) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item { ExecutionHeader(detail) }
+        item { SectionTitle("当前 Plan") }
+        detail.plan?.let { plan ->
+            plan.explanation?.takeIf { it.isNotBlank() }?.let { explanation ->
+                item { BodyBand(explanation) }
+            }
+            items(plan.steps) { step -> PlanStepRow(step) }
+        } ?: item { EmptyBand("这个 Task 尚未创建 Plan") }
+        detail.task.goal?.let { goal ->
+            item { SectionTitle("Goal") }
+            item {
+                KeyValueBand(
+                    listOf(
+                        "状态" to goal.status,
+                        "目标" to goal.objective,
+                        "Tokens" to goal.tokensUsed.toString(),
+                        "耗时" to formatDuration(goal.timeUsedSeconds * 1000),
+                    ),
                 )
             }
         }
+        if (detail.subagents.isNotEmpty()) {
+            item { SectionTitle("Subagents") }
+            items(detail.subagents, key = { it.id }) { task ->
+                TaskCard(task, onClick = { onTaskClick(task.id) })
+            }
+        }
     }
+}
+
+@Composable
+private fun ExecutionHeader(detail: TaskDetail) {
+    val (statusLabel, statusColor) = taskStatus(detail.task.state)
+    Column(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(statusColor)
+            Spacer(Modifier.size(9.dp))
+            Text(statusLabel, color = statusColor, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text(
+                "${detail.execution.turnCount} Turns · ${detail.execution.itemCount} Items",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            detail.task.goal?.objective ?: detail.task.preview,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis,
+        )
+        detail.execution.durationMs?.let {
+            Text(
+                "当前 Turn ${detail.execution.currentTurnStatus.orEmpty()} · ${formatDuration(it)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlanStepRow(step: PlanStep) {
+    val icon: ImageVector
+    val color: Color
+    when (step.status) {
+        "completed" -> {
+            icon = Icons.Default.CheckCircle
+            color = MaterialTheme.colorScheme.secondary
+        }
+        "inProgress" -> {
+            icon = Icons.Default.Pending
+            color = MaterialTheme.colorScheme.tertiary
+        }
+        else -> {
+            icon = Icons.Default.RadioButtonUnchecked
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    }
+    Row(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(icon, contentDescription = step.status, tint = color, modifier = Modifier.size(21.dp))
+        Spacer(Modifier.size(12.dp))
+        Text(step.step, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+}
+
+@Composable
+private fun ContextTab(detail: TaskDetail, modifier: Modifier) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item { SectionTitle("运行上下文") }
+        item {
+            KeyValueBand(
+                listOf(
+                    "项目" to detail.projectName,
+                    "工作目录" to detail.context.cwd,
+                    "来源" to detail.context.source,
+                    "模型提供方" to detail.context.modelProvider,
+                    "Codex CLI" to detail.context.cliVersion,
+                    "上下文压缩" to detail.context.compactionCount.toString(),
+                    "更新时间" to formatTime(detail.context.updatedAt),
+                ),
+            )
+        }
+        detail.context.gitInfo?.let { git ->
+            item { SectionTitle("Git") }
+            item {
+                KeyValueBand(
+                    listOfNotNull(
+                        git.branch?.let { "分支" to it },
+                        git.sha?.let { "Commit" to it.take(12) },
+                        git.originUrl?.let { "远端" to it },
+                    ),
+                )
+            }
+        }
+        item { SectionTitle("用户上下文") }
+        if (detail.context.userMessages.isEmpty()) item { EmptyBand("没有可见的用户上下文") }
+        items(detail.context.userMessages, key = { it.id }) { message ->
+            MessageBand(label = "USER", text = message.text, accent = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+private fun OutputTab(detail: TaskDetail, modifier: Modifier) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item {
+            SectionTitle("模型输出 · ${detail.modelOutputs.size}")
+        }
+        if (detail.modelOutputs.isEmpty()) item { EmptyBand("模型还没有输出") }
+        items(detail.modelOutputs, key = { it.id }) { output ->
+            MessageBand(
+                label = when (output.phase) {
+                    "commentary" -> "PROGRESS"
+                    "final_answer" -> "FINAL"
+                    else -> "ASSISTANT"
+                },
+                text = output.text,
+                accent = if (output.phase == "final_answer") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivityTab(detail: TaskDetail, modifier: Modifier) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item { SectionTitle("工具活动 · ${detail.activities.size}") }
+        if (detail.activities.isEmpty()) item { EmptyBand("没有工具活动") }
+        items(detail.activities, key = { it.id }) { activity -> ActivityRow(activity) }
+    }
+}
+
+@Composable
+private fun ActivityRow(activity: TaskActivity) {
+    val icon = when (activity.type) {
+        "commandExecution" -> Icons.Default.Terminal
+        "fileChange" -> Icons.Default.Description
+        "collabAgentToolCall" -> Icons.Default.SmartToy
+        else -> Icons.Default.AccountTree
+    }
+    Column(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Icon(icon, contentDescription = activity.type, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.size(11.dp))
+            Text(activity.title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.size(8.dp))
+            Text(activity.status, style = MaterialTheme.typography.labelSmall, color = statusColor(activity.status))
+        }
+        activity.detail?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it,
+                modifier = Modifier.padding(start = 31.dp),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 12,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+}
+
+@Composable
+private fun SectionTitle(title: String) {
+    Text(
+        title,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onBackground,
+    )
+}
+
+@Composable
+private fun BodyBand(text: String) {
+    Text(
+        text,
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(16.dp),
+        style = MaterialTheme.typography.bodyMedium,
+    )
+}
+
+@Composable
+private fun KeyValueBand(values: List<Pair<String, String>>) {
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+        values.forEachIndexed { index, (label, value) ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.Top) {
+                Text(
+                    label,
+                    modifier = Modifier.weight(0.32f),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    value,
+                    modifier = Modifier.weight(0.68f),
+                    style = MaterialTheme.typography.bodySmall,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (index < values.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun MessageBand(label: String, text: String, accent: Color) {
+    Column(
+        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Text(label, color = accent, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+        Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+}
+
+@Composable
+private fun EmptyBand(text: String) {
+    Text(
+        text,
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(24.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodyMedium,
+    )
+}
+
+@Composable
+private fun ErrorState(message: String, modifier: Modifier, onRetry: () -> Unit) {
+    Column(
+        modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(36.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(message, color = MaterialTheme.colorScheme.error)
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onRetry) { Text("重试") }
+    }
+}
+
+@Composable
+private fun LoadingBand() {
+    Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+    }
+}
+
+@Composable
+private fun StatusDot(color: Color) {
+    Box(Modifier.size(9.dp).background(color, CircleShape))
+}
+
+@Composable
+private fun taskStatus(state: String): Pair<String, Color> = when (state) {
+    "running" -> "运行中" to MaterialTheme.colorScheme.secondary
+    "waiting" -> "等待" to MaterialTheme.colorScheme.tertiary
+    "error" -> "错误" to MaterialTheme.colorScheme.error
+    else -> "空闲" to Color(0xFF667085)
+}
+
+@Composable
+private fun statusColor(status: String): Color = when (status.lowercase()) {
+    "completed", "success" -> MaterialTheme.colorScheme.secondary
+    "failed", "error", "declined" -> MaterialTheme.colorScheme.error
+    "inprogress", "in_progress", "running" -> MaterialTheme.colorScheme.tertiary
+    else -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 private fun formatTime(epochSeconds: Long): String {
@@ -296,4 +748,15 @@ private fun formatTime(epochSeconds: Long): String {
     return DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochSecond(epochSeconds))
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val seconds = durationMs / 1000
+    val minutes = seconds / 60
+    val hours = minutes / 60
+    return when {
+        hours > 0 -> "${hours}h ${minutes % 60}m"
+        minutes > 0 -> "${minutes}m ${seconds % 60}s"
+        else -> "${seconds}s"
+    }
 }

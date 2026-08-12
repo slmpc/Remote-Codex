@@ -19,6 +19,10 @@ data class MainUiState(
     val connected: Boolean = false,
     val error: String? = null,
     val snapshot: RemoteSnapshot? = null,
+    val selectedTaskId: String? = null,
+    val detail: TaskDetail? = null,
+    val detailLoading: Boolean = false,
+    val detailError: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -68,6 +72,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { refresh() }
     }
 
+    fun openTask(taskId: String) {
+        _state.value = _state.value.copy(
+            selectedTaskId = taskId,
+            detail = null,
+            detailLoading = true,
+            detailError = null,
+        )
+        viewModelScope.launch { refreshDetail(taskId) }
+    }
+
+    fun closeTask() {
+        _state.value = _state.value.copy(
+            selectedTaskId = null,
+            detail = null,
+            detailLoading = false,
+            detailError = null,
+        )
+    }
+
     private suspend fun refresh() {
         val current = _state.value
         if (current.endpoint.isBlank()) return
@@ -81,12 +104,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = null,
                 snapshot = snapshot,
             )
+            _state.value.selectedTaskId?.let { refreshDetail(it) }
         }.onFailure { error ->
             _state.value = _state.value.copy(
                 connecting = false,
                 connected = false,
                 error = error.message ?: "无法连接服务端",
             )
+        }
+    }
+
+    private suspend fun refreshDetail(taskId: String) {
+        val current = _state.value
+        if (current.endpoint.isBlank() || current.selectedTaskId != taskId) return
+        _state.value = current.copy(detailLoading = current.detail == null, detailError = null)
+        runCatching {
+            withContext(Dispatchers.IO) { api.loadDetail(current.endpoint, current.token, taskId) }
+        }.onSuccess { detail ->
+            if (_state.value.selectedTaskId == taskId) {
+                _state.value = _state.value.copy(detail = detail, detailLoading = false, detailError = null)
+            }
+        }.onFailure { error ->
+            if (_state.value.selectedTaskId == taskId) {
+                _state.value = _state.value.copy(
+                    detailLoading = false,
+                    detailError = error.message ?: "无法获取 Task 详情",
+                )
+            }
         }
     }
 }

@@ -3,10 +3,21 @@ package dev.chenmeng.remotecodex
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 class RemoteCodexApi {
     fun load(endpoint: String, token: String): RemoteSnapshot {
-        val connection = URL("${normalizeEndpoint(endpoint)}/api/status").openConnection() as HttpURLConnection
+        return parseSnapshot(getJson(endpoint, token, "/api/status"))
+    }
+
+    fun loadDetail(endpoint: String, token: String, taskId: String): TaskDetail {
+        val encodedId = URLEncoder.encode(taskId, StandardCharsets.UTF_8.toString())
+        return parseDetail(getJson(endpoint, token, "/api/tasks/$encodedId"))
+    }
+
+    private fun getJson(endpoint: String, token: String, path: String): JSONObject {
+        val connection = URL("${normalizeEndpoint(endpoint)}$path").openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.connectTimeout = 4_000
         connection.readTimeout = 12_000
@@ -21,7 +32,7 @@ class RemoteCodexApi {
                 val detail = runCatching { JSONObject(body).optString("error") }.getOrNull()
                 throw IllegalStateException(detail?.takeIf { it.isNotBlank() } ?: "HTTP $status")
             }
-            parseSnapshot(JSONObject(body))
+            JSONObject(body)
         } finally {
             connection.disconnect()
         }
@@ -38,31 +49,24 @@ class RemoteCodexApi {
     private fun parseSnapshot(root: JSONObject): RemoteSnapshot {
         val summaryJson = root.getJSONObject("summary")
         val array = root.getJSONArray("tasks")
-        val tasks = buildList {
-            for (index in 0 until array.length()) {
-                val item = array.getJSONObject(index)
-                val goalJson = item.optJSONObject("goal")
+        val tasks = parseTasks(array)
+        val projectsArray = root.optJSONArray("projects")
+        val projects = buildList {
+            if (projectsArray != null) for (index in 0 until projectsArray.length()) {
+                val item = projectsArray.getJSONObject(index)
+                val projectSummary = item.getJSONObject("summary")
                 add(
-                    CodexTask(
+                    CodexProject(
                         id = item.getString("id"),
-                        name = item.optString("name", "Untitled task"),
-                        preview = item.optString("preview"),
-                        cwd = item.optString("cwd"),
-                        source = item.optString("source", "unknown"),
-                        state = item.optString("state", "idle"),
-                        runtimeStatus = item.optString("runtimeStatus", "unknown"),
-                        updatedAt = item.optLong("updatedAt"),
-                        isSubagent = item.optBoolean("isSubagent"),
-                        agentNickname = item.optNullableString("agentNickname"),
-                        agentRole = item.optNullableString("agentRole"),
-                        goal = goalJson?.let {
-                            GoalInfo(
-                                objective = it.optString("objective"),
-                                status = it.optString("status"),
-                                tokensUsed = it.optLong("tokensUsed"),
-                                timeUsedSeconds = it.optLong("timeUsedSeconds"),
-                            )
-                        },
+                        name = item.optString("name", "未分类"),
+                        path = item.optString("path"),
+                        summary = ProjectSummary(
+                            total = projectSummary.optInt("total"),
+                            running = projectSummary.optInt("running"),
+                            waiting = projectSummary.optInt("waiting"),
+                            subagents = projectSummary.optInt("subagents"),
+                        ),
+                        tasks = parseTasks(item.getJSONArray("tasks")),
                     ),
                 )
             }
@@ -76,10 +80,117 @@ class RemoteCodexApi {
                 errors = summaryJson.optInt("errors"),
                 subagents = summaryJson.optInt("subagents"),
             ),
+            projects = projects,
             tasks = tasks,
+        )
+    }
+
+    private fun parseTasks(array: org.json.JSONArray): List<CodexTask> = buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(parseTask(item))
+            }
+        }
+
+    private fun parseTask(item: JSONObject): CodexTask {
+        val goalJson = item.optJSONObject("goal")
+        return CodexTask(
+            id = item.getString("id"),
+            name = item.optString("name", "Untitled task"),
+            preview = item.optString("preview"),
+            cwd = item.optString("cwd"),
+            source = item.optString("source", "unknown"),
+            state = item.optString("state", "idle"),
+            runtimeStatus = item.optString("runtimeStatus", "unknown"),
+            updatedAt = item.optLong("updatedAt"),
+            isSubagent = item.optBoolean("isSubagent"),
+            agentNickname = item.optNullableString("agentNickname"),
+            agentRole = item.optNullableString("agentRole"),
+            goal = goalJson?.let {
+                GoalInfo(
+                    objective = it.optString("objective"),
+                    status = it.optString("status"),
+                    tokensUsed = it.optLong("tokensUsed"),
+                    timeUsedSeconds = it.optLong("timeUsedSeconds"),
+                )
+            },
+        )
+    }
+
+    private fun parseDetail(root: JSONObject): TaskDetail {
+        val executionJson = root.getJSONObject("execution")
+        val contextJson = root.getJSONObject("context")
+        val projectJson = root.getJSONObject("project")
+        val planJson = root.optJSONObject("plan")
+        val gitJson = contextJson.optJSONObject("gitInfo")
+        return TaskDetail(
+            generatedAt = root.optLong("generatedAt"),
+            task = parseTask(root.getJSONObject("task")),
+            projectName = projectJson.optString("name", "未分类"),
+            projectPath = projectJson.optString("path"),
+            execution = ExecutionInfo(
+                currentTurnStatus = executionJson.optNullableString("currentTurnStatus"),
+                turnCount = executionJson.optInt("turnCount"),
+                itemCount = executionJson.optInt("itemCount"),
+                startedAt = executionJson.optNullableLong("startedAt"),
+                completedAt = executionJson.optNullableLong("completedAt"),
+                durationMs = executionJson.optNullableLong("durationMs"),
+            ),
+            plan = planJson?.let {
+                TaskPlan(
+                    explanation = it.optNullableString("explanation"),
+                    source = it.optString("source", "unknown"),
+                    steps = it.getJSONArray("steps").mapObjects { step ->
+                        PlanStep(step = step.optString("step"), status = step.optString("status", "pending"))
+                    },
+                )
+            },
+            context = TaskContext(
+                cwd = contextJson.optString("cwd"),
+                source = contextJson.optString("source", "unknown"),
+                modelProvider = contextJson.optString("modelProvider", "unknown"),
+                cliVersion = contextJson.optString("cliVersion"),
+                gitInfo = gitJson?.let {
+                    GitInfo(
+                        branch = it.optNullableString("branch"),
+                        sha = it.optNullableString("sha"),
+                        originUrl = it.optNullableString("originUrl"),
+                    )
+                },
+                createdAt = contextJson.optLong("createdAt"),
+                updatedAt = contextJson.optLong("updatedAt"),
+                userMessages = contextJson.getJSONArray("userMessages").mapObjects {
+                    UserContextMessage(it.getString("id"), it.optString("turnId"), it.optString("text"))
+                },
+                compactionCount = contextJson.optInt("compactionCount"),
+            ),
+            modelOutputs = root.getJSONArray("modelOutputs").mapObjects {
+                ModelOutput(
+                    id = it.getString("id"),
+                    turnId = it.optString("turnId"),
+                    text = it.optString("text"),
+                    phase = it.optNullableString("phase"),
+                )
+            },
+            activities = root.getJSONArray("activities").mapObjects {
+                TaskActivity(
+                    id = it.getString("id"),
+                    type = it.optString("type"),
+                    title = it.optString("title"),
+                    status = it.optString("status"),
+                    detail = it.optNullableString("detail"),
+                )
+            },
+            subagents = parseTasks(root.getJSONArray("subagents")),
         )
     }
 }
 
 private fun JSONObject.optNullableString(name: String): String? =
     if (isNull(name)) null else optString(name).takeIf { it.isNotBlank() }
+
+private fun JSONObject.optNullableLong(name: String): Long? =
+    if (isNull(name) || !has(name)) null else optLong(name)
+
+private inline fun <T> org.json.JSONArray.mapObjects(transform: (JSONObject) -> T): List<T> =
+    buildList { for (index in 0 until length()) add(transform(getJSONObject(index))) }

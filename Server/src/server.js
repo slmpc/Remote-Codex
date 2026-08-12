@@ -62,6 +62,18 @@ const server = http.createServer(async (request, response) => {
     }
   }
 
+  const taskDetailMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+  if (request.method === "GET" && taskDetailMatch) {
+    try {
+      const detail = await taskService.detail(decodeURIComponent(taskDetailMatch[1]));
+      return detail
+        ? writeJson(response, 200, detail)
+        : writeJson(response, 404, { error: "Task not found" });
+    } catch (error) {
+      return writeJson(response, 503, { error: error.message });
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/api/events") {
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
