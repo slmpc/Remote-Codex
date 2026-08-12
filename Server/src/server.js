@@ -6,7 +6,7 @@ import { TaskService } from "./task-service.js";
 
 const host = process.env.REMOTE_CODEX_HOST ?? "0.0.0.0";
 const port = Number(process.env.REMOTE_CODEX_PORT ?? 8787);
-const version = "1.3.0";
+const version = "1.3.1";
 const clients = new Set();
 const taskService = new TaskService(new CodexAppServer(), { desktopCodex: new DesktopCodexClient() });
 

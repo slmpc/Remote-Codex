@@ -1,31 +1,26 @@
-# Remote Codex 1.3.0
+# Remote Codex 1.3.1
 
-`1.3.0` 将 Remote Codex 从只读监控工具扩展为可在 Android 手机上继续操作已有 Codex Task 的局域网客户端。
+`1.3.1` 增加正式 Android 应用图标，并修复 Codex Desktop 运行中 Task 的立即干预链路。
 
 ## 本版内容
 
-- 在统一“对话”页按真实顺序查看用户输入和模型输出。
-- 向运行中的 Turn 发送 Prompt 进行立即干预。
-- 将多个 Prompt 加入持久化队列，在当前 Turn 结束后按顺序自动继续。
-- 支持删除待发送 Prompt，或将队列项一键改为立即干预。
-- Prompt 队列保存在电脑本地，服务重启后仍可恢复。
-- 最新消息优先可切换；使用时间顺序时默认滚动到底部并智能跟随新消息。
-- Prompt 输入区固定在底部，并适配 Android 输入法，发送按钮不会被键盘遮挡。
-- 详情页使用四等分 Material 3 标签栏，修复选项对齐问题。
-- Prompt 队列管理固定在输入区上方，可随时展开、立即发送或删除。
-- 立即发送按钮不再因跨进程状态误判而禁用；Task 空闲时会直接开始新 Turn。
-- 空 Prompt 输入框缩为单行，输入多行内容时再自动增高。
+- 使用全新的 Remote Codex 自适应启动图标，并提供 Android 13 单色主题图标。
+- 运行中的 Codex Desktop Task 通过本机 Desktop 桥接接收立即干预，不再返回 `thread not found`。
+- Task 已结束或未加载时会先恢复线程，再开始新的 Turn。
+- Prompt 发送失败时保留队列项并显示错误，避免静默丢失。
+- 默认进入“对话”页，成功操作使用 Snackbar 显示，不再挤压输入区。
+- 空 Prompt 队列不再显示管理栏，时间顺序的自动滚动行为更加稳定。
 
 ## 分发文件
 
-- `Remote-Codex-v1.3.0.zip`：包含 APK、服务端、使用文档和校验文件的总发行包。
-- `Remote-Codex-Android-v1.3.0.apk`：Android 8.0 及以上设备安装包。
-- `Remote-Codex-Server-v1.3.0.zip`：电脑端服务和完整使用文档。
+- `Remote-Codex-v1.3.1.zip`：包含 APK、服务端、使用文档和校验文件的总发行包。
+- `Remote-Codex-Android-v1.3.1.apk`：Android 8.0 及以上设备安装包。
+- `Remote-Codex-Server-v1.3.1.zip`：电脑端服务和完整使用文档。
 - `SHA256SUMS.txt`：分发文件的 SHA-256 校验值。
 
 ## 升级提示
 
-已安装 `1.2.x` 正式版时可直接覆盖升级 Android APK。电脑端服务必须同步升级到 `1.3.0`，旧服务端不提供 Prompt 写入和队列接口。
+已安装 `1.3.0` 正式版时可直接覆盖升级 Android APK。电脑端服务必须同步升级到 `1.3.1`，才能使用修复后的 Desktop 立即干预链路。
 
 早期测试 APK 使用 Android 调试密钥签名，若手机提示签名冲突，请先卸载旧测试版再安装正式版。
 

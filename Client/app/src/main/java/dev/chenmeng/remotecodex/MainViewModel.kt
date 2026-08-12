@@ -113,6 +113,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(promptDraft = value, promptMessage = null, promptError = null)
     }
 
+    fun consumePromptMessage() {
+        _state.value = _state.value.copy(promptMessage = null)
+    }
+
     fun submitPrompt(mode: String) {
         val current = _state.value
         val taskId = current.selectedTaskId ?: return

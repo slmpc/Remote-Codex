@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -140,6 +144,7 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
             onSubmitPrompt = viewModel::submitPrompt,
             onDeleteQueuedPrompt = viewModel::deleteQueuedPrompt,
             onInterveneQueuedPrompt = viewModel::interveneQueuedPrompt,
+            onPromptMessageShown = viewModel::consumePromptMessage,
         )
     } else {
         ProjectListScreen(
@@ -225,8 +230,10 @@ private fun TaskDetailScreen(
     onSubmitPrompt: (String) -> Unit,
     onDeleteQueuedPrompt: (String) -> Unit,
     onInterveneQueuedPrompt: (String) -> Unit,
+    onPromptMessageShown: () -> Unit,
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable(state.selectedTaskId) { mutableIntStateOf(1) }
+    val snackbarHostState = remember { SnackbarHostState() }
     val tabs = listOf(
         DetailTab("计划", Icons.Default.AccountTree),
         DetailTab("对话", Icons.AutoMirrored.Filled.Send),
@@ -235,7 +242,15 @@ private fun TaskDetailScreen(
     )
     val detail = state.detail
 
+    LaunchedEffect(state.promptMessage) {
+        state.promptMessage?.let { message ->
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
+            onPromptMessageShown()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
                 TopAppBar(
@@ -329,18 +344,28 @@ private fun ConversationTab(
 ) {
     val messages = if (newestFirst) detail.conversation.asReversed() else detail.conversation
     val listState = rememberLazyListState()
+    val isUserDragging by listState.interactionSource.collectIsDraggedAsState()
     var followBottom by remember(detail.task.id) { mutableStateOf(true) }
+    var userScrollActive by remember(detail.task.id) { mutableStateOf(false) }
     var previousNewestFirst by remember(detail.task.id) { mutableStateOf<Boolean?>(null) }
     var previousMessageCount by remember(detail.task.id) { mutableIntStateOf(0) }
     val itemCount = 2 + maxOf(messages.size, 1)
 
-    LaunchedEffect(listState, newestFirst) {
+    LaunchedEffect(listState, newestFirst, isUserDragging) {
         snapshotFlow {
-            val layout = listState.layoutInfo
-            Triple(listState.isScrollInProgress, layout.visibleItemsInfo.lastOrNull()?.index, layout.totalItemsCount)
-        }.collect { (scrolling, lastVisible, total) ->
-            if (!newestFirst && scrolling && total > 0) {
-                followBottom = lastVisible != null && lastVisible >= total - 1
+            Triple(isUserDragging, listState.isScrollInProgress, !listState.canScrollForward)
+        }.collect { (dragging, scrolling, atBottom) ->
+            when {
+                newestFirst -> userScrollActive = false
+                dragging -> {
+                    userScrollActive = true
+                    followBottom = atBottom
+                }
+                userScrollActive && scrolling -> followBottom = atBottom
+                userScrollActive -> {
+                    followBottom = atBottom
+                    userScrollActive = false
+                }
             }
         }
     }
@@ -352,7 +377,11 @@ private fun ConversationTab(
         previousMessageCount = detail.conversation.size
         when {
             switchedToNewestFirst -> listState.scrollToItem(0)
-            !newestFirst && (switchedToChronological || messagesAdded && followBottom) -> {
+            switchedToChronological -> {
+                followBottom = true
+                listState.scrollToItem(itemCount - 1)
+            }
+            !newestFirst && messagesAdded && followBottom -> {
                 listState.scrollToItem(itemCount - 1)
             }
         }
@@ -422,35 +451,34 @@ private fun PromptDock(
             .imePadding(),
     ) {
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-        Row(
-            Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.size(9.dp))
-            Text("Prompt 队列 · ${promptQueue.size}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            IconButton(
-                onClick = { queueExpanded = !queueExpanded },
-                enabled = promptQueue.isNotEmpty(),
+        if (promptQueue.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    if (queueExpanded) Icons.Default.ExpandLess else Icons.Default.ChevronRight,
-                    contentDescription = if (queueExpanded) "收起 Prompt 队列" else "管理 Prompt 队列",
-                )
-            }
-        }
-        if (queueExpanded) {
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
-                items(promptQueue, key = { "managed-${it.id}" }) { prompt ->
-                    QueuedPromptRow(
-                        prompt = prompt,
-                        actionsEnabled = !state.promptSubmitting,
-                        onIntervene = { onInterveneQueuedPrompt(prompt.id) },
-                        onDelete = { onDeleteQueuedPrompt(prompt.id) },
+                Icon(Icons.Default.Update, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.size(9.dp))
+                Text("Prompt 队列 · ${promptQueue.size}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                IconButton(onClick = { queueExpanded = !queueExpanded }) {
+                    Icon(
+                        if (queueExpanded) Icons.Default.ExpandLess else Icons.Default.ChevronRight,
+                        contentDescription = if (queueExpanded) "收起 Prompt 队列" else "管理 Prompt 队列",
                     )
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            if (queueExpanded) {
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
+                    items(promptQueue, key = { "managed-${it.id}" }) { prompt ->
+                        QueuedPromptRow(
+                            prompt = prompt,
+                            actionsEnabled = !state.promptSubmitting,
+                            onIntervene = { onInterveneQueuedPrompt(prompt.id) },
+                            onDelete = { onDeleteQueuedPrompt(prompt.id) },
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+            }
         }
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -488,7 +516,6 @@ private fun PromptDock(
         when {
             state.promptSubmitting -> Text("正在提交", style = MaterialTheme.typography.labelSmall)
             state.promptError != null -> Text(state.promptError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
-            state.promptMessage != null -> Text(state.promptMessage, color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelSmall)
         }
         }
     }

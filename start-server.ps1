@@ -16,7 +16,7 @@ if (-not (Get-Command codex -ErrorAction SilentlyContinue)) {
 $env:REMOTE_CODEX_PORT = $Port.ToString()
 
 Write-Host ""
-Write-Host "Remote Codex 1.3.0"
+Write-Host "Remote Codex 1.3.1"
 Write-Host "保持此窗口开启；按 Ctrl+C 停止服务。"
 Write-Host ""
 

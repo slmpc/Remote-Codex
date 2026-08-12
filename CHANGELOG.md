@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.1 - 2026-08-13
+
+- 增加 Remote Codex Android 自适应启动图标，并支持 Android 13 主题图标。
+- 修复运行中的 Codex Desktop Task 立即干预出现 `thread not found` 的问题。
+- 空闲 Task 会先恢复线程，再开始新的 Turn。
+- Prompt 队列发送失败时保留队列项，并在 Android 客户端显示具体错误。
+- 对话页默认打开，成功操作使用 Snackbar 反馈，空队列不再占用输入区空间。
+- 改进时间顺序下的自动滚动，用户主动向上浏览时不再被新消息拉回底部。
+
 ## 1.3.0 - 2026-08-13
 
 - Task 详情的 Material 3 对话页可向运行中的 Turn 立即发送干预。
