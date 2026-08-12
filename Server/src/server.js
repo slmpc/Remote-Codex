@@ -5,7 +5,7 @@ import { TaskService } from "./task-service.js";
 
 const host = process.env.REMOTE_CODEX_HOST ?? "0.0.0.0";
 const port = Number(process.env.REMOTE_CODEX_PORT ?? 8787);
-const token = process.env.REMOTE_CODEX_TOKEN ?? "";
+const version = "1.2.0";
 const clients = new Set();
 const taskService = new TaskService(new CodexAppServer());
 
@@ -15,11 +15,6 @@ function localAddresses() {
     .filter((item) => item?.family === "IPv4" && !item.internal)
     .map((item) => item.address);
 }
-function authorized(request) {
-  if (!token) return true;
-  return request.headers.authorization === `Bearer ${token}`;
-}
-
 function writeJson(response, status, value) {
   const body = JSON.stringify(value);
   response.writeHead(status, {
@@ -45,12 +40,8 @@ const server = http.createServer(async (request, response) => {
     return writeJson(response, taskService.snapshot ? 200 : 503, {
       ok: Boolean(taskService.snapshot),
       service: "remote-codex",
+      version,
     });
-  }
-
-  if (!authorized(request)) {
-    response.setHeader("WWW-Authenticate", "Bearer");
-    return writeJson(response, 401, { error: "Unauthorized" });
   }
 
   if (request.method === "GET" && url.pathname === "/api/status") {
@@ -105,7 +96,7 @@ try {
   server.listen(port, host, () => {
     console.log(`Remote Codex server: http://${host}:${port}`);
     for (const address of localAddresses()) console.log(`Phone URL: http://${address}:${port}`);
-    console.log(token ? "Bearer token authentication: enabled" : "Bearer token authentication: disabled (trusted LAN only)");
+    console.log("LAN access: no authentication");
   });
 } catch (error) {
   console.error(`Failed to start: ${error.message}`);

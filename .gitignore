@@ -6,3 +6,7 @@ local.properties
 Server/node_modules/
 Server/.env
 *.log
+dist/
+*.jks
+*.keystore
+release-signing.properties

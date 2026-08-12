@@ -69,7 +69,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,7 +130,6 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
         ProjectListScreen(
             state = state,
             onEndpointChange = viewModel::updateEndpoint,
-            onTokenChange = viewModel::updateToken,
             onConnect = viewModel::connect,
             onRefresh = viewModel::refreshNow,
             onTaskClick = viewModel::openTask,
@@ -145,7 +143,6 @@ private fun RemoteCodexScreen(viewModel: MainViewModel = viewModel()) {
 private fun ProjectListScreen(
     state: MainUiState,
     onEndpointChange: (String) -> Unit,
-    onTokenChange: (String) -> Unit,
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onTaskClick: (String) -> Unit,
@@ -170,7 +167,7 @@ private fun ProjectListScreen(
             contentPadding = PaddingValues(bottom = 24.dp),
         ) {
             item {
-                ConnectionPanel(state, onEndpointChange, onTokenChange, onConnect)
+                ConnectionPanel(state, onEndpointChange, onConnect)
             }
             state.snapshot?.let { snapshot ->
                 item { SummaryBand(snapshot.summary, snapshot.generatedAt) }
@@ -308,7 +305,6 @@ private fun ConnectionTitle(connected: Boolean) {
 private fun ConnectionPanel(
     state: MainUiState,
     onEndpointChange: (String) -> Unit,
-    onTokenChange: (String) -> Unit,
     onConnect: () -> Unit,
 ) {
     Column(
@@ -321,14 +317,6 @@ private fun ConnectionPanel(
             label = { Text("电脑 IP") },
             placeholder = { Text("192.168.1.10:8787") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = state.token,
-            onValueChange = onTokenChange,
-            label = { Text("访问令牌（可选）") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
         Row(

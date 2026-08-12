@@ -4,6 +4,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseKeystore = providers.environmentVariable("REMOTE_CODEX_KEYSTORE").orNull
+val releaseStorePassword = providers.environmentVariable("REMOTE_CODEX_STORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("REMOTE_CODEX_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("REMOTE_CODEX_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseKeystore,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "dev.chenmeng.remotecodex"
     compileSdk = 35
@@ -14,6 +25,24 @@ android {
         targetSdk = 35
         versionCode = 3
         versionName = "1.2.0"
+    }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(requireNotNull(releaseKeystore))
+                storePassword = requireNotNull(releaseStorePassword)
+                keyAlias = requireNotNull(releaseKeyAlias)
+                keyPassword = requireNotNull(releaseKeyPassword)
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {

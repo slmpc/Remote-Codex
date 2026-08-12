@@ -7,22 +7,21 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 class RemoteCodexApi {
-    fun load(endpoint: String, token: String): RemoteSnapshot {
-        return parseSnapshot(getJson(endpoint, token, "/api/status"))
+    fun load(endpoint: String): RemoteSnapshot {
+        return parseSnapshot(getJson(endpoint, "/api/status"))
     }
 
-    fun loadDetail(endpoint: String, token: String, taskId: String): TaskDetail {
+    fun loadDetail(endpoint: String, taskId: String): TaskDetail {
         val encodedId = URLEncoder.encode(taskId, StandardCharsets.UTF_8.toString())
-        return parseDetail(getJson(endpoint, token, "/api/tasks/$encodedId"))
+        return parseDetail(getJson(endpoint, "/api/tasks/$encodedId"))
     }
 
-    private fun getJson(endpoint: String, token: String, path: String): JSONObject {
+    private fun getJson(endpoint: String, path: String): JSONObject {
         val connection = URL("${normalizeEndpoint(endpoint)}$path").openConnection() as HttpURLConnection
         connection.requestMethod = "GET"
         connection.connectTimeout = 4_000
         connection.readTimeout = 12_000
         connection.setRequestProperty("Accept", "application/json")
-        if (token.isNotBlank()) connection.setRequestProperty("Authorization", "Bearer ${token.trim()}")
 
         return try {
             val status = connection.responseCode
